@@ -14,6 +14,13 @@ class ResourceRecord:
     id: int
     type: str
     name: str
+    width: int | None = None
+    height: int | None = None
+    depth: int | None = None
+    dimension: int | None = None
+    texture_type: str | None = None
+    format: str | None = None
+    size: int | None = None
 
 
 @dataclass

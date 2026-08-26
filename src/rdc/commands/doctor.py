@@ -136,6 +136,32 @@ def _check_win_python_version() -> CheckResult:
             if (Path(p) / "renderdoc.pyd").is_file()
         ]
         if pyds:
+            manifest_path = Path(pyds[0]).parent / "renderdoc-runtime.json"
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    manifest_python = str(manifest.get("pythonVersion", ""))
+                    manifest_bits = int(manifest.get("architectureBits", 0))
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    return CheckResult(
+                        "win-python-version",
+                        False,
+                        f"invalid runtime manifest at {manifest_path}",
+                    )
+                running_python = f"{sys.version_info[0]}.{sys.version_info[1]}"
+                running_bits = 64 if sys.maxsize > 2**32 else 32
+                if manifest_python != running_python or manifest_bits != running_bits:
+                    return CheckResult(
+                        "win-python-version",
+                        False,
+                        f"runtime requires Python {manifest_python} x{manifest_bits}, "
+                        f"running Python {running_python} x{running_bits}",
+                    )
+                return CheckResult(
+                    "win-python-version",
+                    True,
+                    f"runtime manifest matches Python {running_python} x{running_bits}",
+                )
             return CheckResult(
                 "win-python-version",
                 True,
@@ -430,34 +456,39 @@ def _check_mac_renderdoc_dylib() -> CheckResult:
     return CheckResult("mac-renderdoc-dylib", False, "renderdoc library not found in search paths")
 
 
-def run_doctor() -> list[CheckResult]:
-    """Run all environment checks and return results."""
-    module, renderdoc_check = _import_renderdoc()
-    results = [
-        _check_python(),
-        _check_platform(),
-        renderdoc_check,
-        _check_replay_support(module),
-        _check_renderdoccmd(),
-    ]
-    if sys.platform == "win32":
-        results += [
-            _check_win_python_version(),
-            _check_win_vs_build_tools(),
-            _check_win_renderdoc_install(),
-            _check_win_vulkan_layer(),
-        ]
-    if sys.platform == "darwin":
-        results += [
-            _check_mac_xcode_cli(),
-            _check_mac_homebrew(),
-            _check_mac_renderdoc_dylib(),
-        ]
-    results += [
-        _check_adb(),
-        _check_android_apk(module),
-        _check_renderdoc_variant(module),
-    ]
+def run_doctor(profile: str = "full") -> list[CheckResult]:
+    """Run checks for a replay, build, capture, or full environment profile."""
+    if profile not in {"replay", "build", "capture", "full"}:
+        raise ValueError(f"unknown doctor profile: {profile}")
+
+    results = [_check_python(), _check_platform()]
+    module: ModuleType | None = None
+
+    if profile in {"replay", "full"}:
+        module, renderdoc_check = _import_renderdoc()
+        results += [renderdoc_check, _check_replay_support(module)]
+        if sys.platform == "win32":
+            results.append(_check_win_python_version())
+        if sys.platform == "darwin":
+            results.append(_check_mac_renderdoc_dylib())
+        results.append(_check_renderdoc_variant(module))
+
+    if profile in {"build", "full"}:
+        if sys.platform == "win32":
+            results.append(_check_win_vs_build_tools())
+        if sys.platform == "darwin":
+            results += [_check_mac_xcode_cli(), _check_mac_homebrew()]
+
+    if profile in {"capture", "full"}:
+        results.append(_check_renderdoccmd())
+        if sys.platform == "win32":
+            results += [_check_win_renderdoc_install(), _check_win_vulkan_layer()]
+
+    if profile == "full":
+        if module is None:
+            module, _ = _import_renderdoc()
+        results += [_check_adb(), _check_android_apk(module)]
+
     return results
 
 
@@ -494,9 +525,16 @@ HINT_MAP: dict[str, str] = {
 
 
 @click.command("doctor")
-def doctor_cmd() -> None:
+@click.option(
+    "--profile",
+    type=click.Choice(["replay", "build", "capture", "full"]),
+    default="full",
+    show_default=True,
+    help="Only run checks required for the selected workflow.",
+)
+def doctor_cmd(profile: str) -> None:
     """Run environment checks for rdc-cli."""
-    results = run_doctor()
+    results = run_doctor(profile)
     has_error = False
 
     for result in results:

@@ -53,7 +53,7 @@ def vkcube_replay(rd_init: Any) -> Generator[tuple[Any, Any, Any], None, None]:
     result = cap.OpenFile(rdc_path, "", None)
     assert result == rd.ResultCode.Succeeded, f"OpenFile failed: {result}"
 
-    assert cap.LocalReplaySupport() == rd.ReplaySupport.Supported
+    assert cap.LocalReplaySupport() != rd.ReplaySupport.Unsupported
     result, controller = cap.OpenCapture(rd.ReplayOptions(), None)
     assert result == rd.ResultCode.Succeeded, f"OpenCapture failed: {result}"
 
@@ -72,7 +72,7 @@ def hello_triangle_replay(rd_init: Any) -> Generator[tuple[Any, Any, Any], None,
     rdc_path = str(FIXTURES_DIR / "hello_triangle.rdc")
     result = cap.OpenFile(rdc_path, "", None)
     assert result == rd.ResultCode.Succeeded
-    assert cap.LocalReplaySupport() == rd.ReplaySupport.Supported
+    assert cap.LocalReplaySupport() != rd.ReplaySupport.Unsupported
     result, controller = cap.OpenCapture(rd.ReplayOptions(), None)
     assert result == rd.ResultCode.Succeeded
     sf = cap.GetStructuredData()

@@ -10,6 +10,12 @@ import click
 @click.option("--build-dir", default=None, help="Build cache directory.")
 @click.option("--version", "rdoc_version", default=None, help="RenderDoc tag to build.")
 @click.option("--jobs", type=int, default=None, help="Parallel build jobs.")
+@click.option(
+    "--register-vulkan-layer",
+    is_flag=True,
+    default=False,
+    help="Register the built capture layer in HKCU (disabled by default).",
+)
 @click.option("--android", is_flag=True, default=False, help="Download Android APKs.")
 @click.option("--arm", is_flag=True, default=False, help="Download ARM Performance Studio (Mali).")
 @click.option(
@@ -23,6 +29,7 @@ def setup_renderdoc_cmd(
     build_dir: str | None,
     rdoc_version: str | None,
     jobs: int | None,
+    register_vulkan_layer: bool,
     android: bool,
     arm: bool,
     arm_studio: str | None,
@@ -44,6 +51,8 @@ def setup_renderdoc_cmd(
         argv.extend(["--version", rdoc_version])
     if jobs is not None:
         argv.extend(["--jobs", str(jobs)])
+    if register_vulkan_layer:
+        argv.append("--register-vulkan-layer")
     from rdc._build_renderdoc import main
 
     main(argv)

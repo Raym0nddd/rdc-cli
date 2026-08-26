@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -30,11 +31,13 @@ import zipfile
 from pathlib import Path
 from urllib.request import urlretrieve
 
-RDOC_TAG = "v1.41"
+RDOC_TAG = "v1.45"
+RDOC_COMMIT = "2fc0bc04cb95499635f63986a55bc6f67849dd9f"
 RDOC_REPO = "https://github.com/baldurk/renderdoc.git"
 SWIG_URL = "https://github.com/baldurk/swig/archive/renderdoc-modified-7.zip"
 SWIG_SHA256 = "9d7e5013ada6c42ec95ab167a34db52c1cc8c09b89c8e9373631b1f10596c648"
 SWIG_SUBDIR = "swig-renderdoc-modified-7"
+RUNTIME_MANIFEST = "renderdoc-runtime.json"
 
 CMAKE_COMMON_FLAGS = [
     "-DCMAKE_BUILD_TYPE=Release",
@@ -186,104 +189,131 @@ def _find_msbuild() -> str:
     return str(msbuild)
 
 
-def _prepare_win_python(src_dir: Path) -> Path:
-    """Prepare Python prefix for MSBuild and return the prefix path.
+def _prepare_win_python(src_dir: Path, staging_dir: Path | None = None) -> Path:
+    """Prepare an isolated Python SDK prefix for MSBuild.
 
     RenderDoc's python.props checks for:
     - {prefix}/include/Python.h  (pixi has Include/Python.h -- case-insensitive on Windows, OK)
     - {prefix}/python{ver}.zip   (dummy file, content irrelevant)
     - {prefix}/libs/python{ver}.lib
 
-    Also patches python.props to add current Python version entry if missing.
+    The source Python installation is never modified. Required headers and import
+    libraries are copied into a build-local staging prefix. RenderDoc v1.45
+    already lists supported CPython versions in python.props; an unsupported
+    interpreter fails explicitly instead of patching the cloned source.
     """
-    # Use base_prefix to find headers/libs (sys.prefix is a venv for uv tool installs)
-    prefix = Path(sys.base_prefix)
+    source_prefix = Path(sys.base_prefix)
     ver = f"{sys.version_info[0]}{sys.version_info[1]}"
+    prefix = staging_dir or src_dir.parent / f"python-sdk-cp{ver}-x64"
+    include_src = source_prefix / "include"
+    if not include_src.is_dir():
+        include_src = source_prefix / "Include"
+    include_header = include_src / "Python.h"
+    if not include_header.exists():
+        sys.stderr.write(f"ERROR: Python.h not found under {source_prefix}\n")
+        raise SystemExit(1)
 
-    # Create dummy python{ver}.zip if missing
+    lib_src = source_prefix / "libs" / f"python{ver}.lib"
+    if not lib_src.exists():
+        sys.stderr.write(f"ERROR: {lib_src} not found\n")
+        raise SystemExit(1)
+
+    dll_src = source_prefix / f"python{ver}.dll"
+    if not dll_src.exists():
+        sys.stderr.write(f"ERROR: {dll_src} not found\n")
+        raise SystemExit(1)
+
+    include_dst = prefix / "include"
+    libs_dst = prefix / "libs"
+    shutil.copytree(include_src, include_dst, dirs_exist_ok=True)
+    libs_dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(lib_src, libs_dst / lib_src.name)
+    shutil.copy2(dll_src, prefix / dll_src.name)
+
     dummy_zip = prefix / f"python{ver}.zip"
     if not dummy_zip.exists():
         _log(f"creating dummy {dummy_zip}")
+        prefix.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(dummy_zip, "w") as zf:
             zf.writestr("README", "dummy zip for RenderDoc build")
 
-    # Verify required files
-    include = prefix / "include" / "Python.h"
-    if not include.exists():
-        # Case-insensitive fallback (pixi uses Include/)
-        alt = prefix / "Include" / "Python.h"
-        if not alt.exists():
-            sys.stderr.write(f"ERROR: Python.h not found at {include} or {alt}\n")
-            raise SystemExit(1)
-
-    lib = prefix / "libs" / f"python{ver}.lib"
-    if not lib.exists():
-        sys.stderr.write(f"ERROR: {lib} not found\n")
-        raise SystemExit(1)
-
-    # Patch python.props to include current Python version
     props_file = src_dir / "qrenderdoc" / "Code" / "pyrenderdoc" / "python.props"
     if props_file.exists():
         content = props_file.read_text(encoding="utf-8")
-        if ver not in content:
-            _log(f"patching python.props for Python {ver}")
-            entry = (
-                f"<PropertyGroup><PythonMajorMinorTest>{ver}</PythonMajorMinorTest></PropertyGroup>\n"
-                f"<PropertyGroup Condition=\"'$(CustomPythonUsed)'=='0' AND "
-                f"Exists('$(PythonOverride)\\include\\Python.h') AND "
-                f"Exists('$(PythonOverride)\\python$(PythonMajorMinorTest).zip') AND "
-                f"(Exists('$(PythonOverride)\\python$(PythonMajorMinorTest).lib') OR "
-                f"Exists('$(PythonOverride)\\libs\\python$(PythonMajorMinorTest).lib'))\">"
-                f"<CustomPythonUsed>$(PythonMajorMinorTest)</CustomPythonUsed></PropertyGroup>\n"
+        marker = f"<PythonMajorMinorTest>{ver}</PythonMajorMinorTest>"
+        if marker not in content:
+            sys.stderr.write(
+                f"ERROR: RenderDoc {RDOC_TAG} python.props does not support Python {ver}\n"
             )
-            # Insert before the "313" entry
-            marker = "<PythonMajorMinorTest>313</PythonMajorMinorTest>"
-            if marker in content:
-                idx = content.index(marker)
-                # Find the start of the PropertyGroup containing the marker
-                pg_start = content.rfind("<PropertyGroup>", 0, idx)
-                assert pg_start != -1, f"No <PropertyGroup> before marker in {props_file}"
-                content = content[:pg_start] + entry + content[pg_start:]
-            else:
-                # Fallback: insert before closing </Project>
-                content = content.replace("</Project>", entry + "</Project>")
-            props_file.write_text(content, encoding="utf-8")
+            raise SystemExit(1)
 
     return prefix
 
 
 def _run_msbuild(build_dir: Path, python_prefix: Path, jobs: int | None = None) -> None:
-    """Build renderdoc.sln with MSBuild."""
-    sln = build_dir / "renderdoc" / "renderdoc.sln"
+    """Build the Python module project and its RenderDoc dependencies with MSBuild."""
+    source_dir = build_dir / "renderdoc"
+    breakpad_dir = source_dir / "renderdoc" / "3rdparty" / "breakpad" / "client" / "windows"
+    projects = [
+        breakpad_dir / "common.vcxproj",
+        breakpad_dir / "crash_generation" / "crash_generation_client.vcxproj",
+        breakpad_dir / "handler" / "exception_handler.vcxproj",
+        source_dir / "qrenderdoc" / "Code" / "pyrenderdoc" / "pyrenderdoc_module.vcxproj",
+    ]
     msbuild = _find_msbuild()
     n = jobs or os.cpu_count() or 4
     env = dict(os.environ)
     env["RENDERDOC_PYTHON_PREFIX64"] = str(python_prefix)
     env["CL"] = (env.get("CL", "") + " /wd4996").strip()
-    cmd = [
-        msbuild,
-        str(sln),
-        "/p:Configuration=Release",
-        "/p:Platform=x64",
-        "/p:PlatformToolset=v143",
-        f"/m:{n}",
-    ]
     _log("--- MSBuild ---")
-    subprocess.run(cmd, check=True, env=env)
+    for project in projects:
+        cmd = [
+            msbuild,
+            str(project),
+            "/t:Build",
+            "/p:Configuration=Release",
+            "/p:Platform=x64",
+            "/p:PlatformToolset=v143",
+            f"/p:SolutionDir={source_dir}{os.sep}",
+            f"/m:{n}",
+        ]
+        subprocess.run(cmd, check=True, env=env)
 
 
-def clone_renderdoc(build_dir: Path, version: str = RDOC_TAG) -> None:
-    """Clone renderdoc source (idempotent)."""
+def _source_commit(src_dir: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(src_dir), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def clone_renderdoc(build_dir: Path, version: str = RDOC_TAG) -> str:
+    """Clone the pinned RenderDoc source and verify its exact commit."""
     src_dir = build_dir / "renderdoc"
     if src_dir.exists():
+        if not (src_dir / ".git").exists():
+            sys.stderr.write(f"ERROR: existing RenderDoc source is not a git checkout: {src_dir}\n")
+            raise SystemExit(1)
         _log(f"renderdoc source already exists at {src_dir}")
-        return
-    _log(f"--- Cloning renderdoc {version} ---")
-    build_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", version, RDOC_REPO, str(src_dir)],
-        check=True,
-    )
+    else:
+        _log(f"--- Cloning renderdoc {version} ---")
+        build_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", version, RDOC_REPO, str(src_dir)],
+            check=True,
+        )
+
+    commit = _source_commit(src_dir)
+    if commit != RDOC_COMMIT:
+        sys.stderr.write(
+            f"ERROR: RenderDoc source commit mismatch: expected {RDOC_COMMIT}, got {commit}. "
+            "Use a clean build directory.\n"
+        )
+        raise SystemExit(1)
+    return commit
 
 
 def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
@@ -774,6 +804,49 @@ def _artifacts_present(install_dir: Path, plat: str) -> bool:
     return all((install_dir / n).exists() for n in required)
 
 
+def _runtime_identity(version: str, commit: str, plat: str) -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "renderdocVersion": version,
+        "renderdocCommit": commit,
+        "pythonImplementation": sys.implementation.name,
+        "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "architectureBits": struct.calcsize("P") * 8,
+        "platform": plat,
+    }
+
+
+def _runtime_matches(install_dir: Path, plat: str, version: str) -> bool:
+    if not _artifacts_present(install_dir, plat):
+        return False
+    manifest_path = install_dir / RUNTIME_MANIFEST
+    if not manifest_path.is_file():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected = _runtime_identity(version, RDOC_COMMIT, plat)
+    return all(manifest.get(key) == value for key, value in expected.items())
+
+
+def _write_runtime_manifest(
+    install_dir: Path,
+    version: str,
+    commit: str,
+    plat: str,
+    *,
+    vulkan_layer_registered: bool,
+) -> None:
+    install_dir.mkdir(parents=True, exist_ok=True)
+    manifest = _runtime_identity(version, commit, plat)
+    manifest["vulkanLayerRegistered"] = vulkan_layer_registered
+    (install_dir / RUNTIME_MANIFEST).write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point: parse args and orchestrate the build."""
     parser = argparse.ArgumentParser(description="Build RenderDoc Python bindings from source.")
@@ -781,7 +854,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--build-dir", default=None, help="Build cache directory")
     parser.add_argument("--version", default=RDOC_TAG, help="RenderDoc tag to build")
     parser.add_argument("--jobs", type=int, default=None, help="Parallel build jobs")
+    parser.add_argument(
+        "--register-vulkan-layer",
+        action="store_true",
+        help="Register the built capture layer in HKCU (disabled by default)",
+    )
     args = parser.parse_args(argv)
+
+    if args.version != RDOC_TAG:
+        parser.error(
+            f"this rmRenderer fork is pinned to {RDOC_TAG}; requested {args.version}"
+        )
 
     plat = _platform()
     install_dir = Path(args.install_dir).resolve() if args.install_dir else default_install_dir()
@@ -789,18 +872,26 @@ def main(argv: list[str] | None = None) -> None:
         Path(args.build_dir).resolve() if args.build_dir else install_dir.parent / "renderdoc-build"
     )
 
-    if _artifacts_present(install_dir, plat):
+    if _runtime_matches(install_dir, plat, args.version):
         _log(f"renderdoc already exists at {install_dir}/")
-        _log(f"To rebuild: rm -rf {install_dir} {build_dir} && re-run this script")
         return
+    if _artifacts_present(install_dir, plat):
+        sys.stderr.write(
+            f"ERROR: RenderDoc artifacts at {install_dir} have missing or incompatible "
+            f"{RUNTIME_MANIFEST}. Use a clean install directory.\n"
+        )
+        raise SystemExit(1)
 
     _log(f"=== Building renderdoc {args.version} Python module ===")
     check_prerequisites(plat)
     verify_tool_versions(plat)
-    clone_renderdoc(build_dir, args.version)
+    source_commit = clone_renderdoc(build_dir, args.version)
 
     if plat == "windows":
-        python_prefix = _prepare_win_python(build_dir / "renderdoc")
+        python_prefix = _prepare_win_python(
+            build_dir / "renderdoc",
+            build_dir / f"python-sdk-cp{sys.version_info.major}{sys.version_info.minor}-x64",
+        )
         _run_msbuild(build_dir, python_prefix, args.jobs)
     else:
         download_swig(build_dir)
@@ -812,8 +903,16 @@ def main(argv: list[str] | None = None) -> None:
 
     copy_artifacts(build_dir, install_dir, plat)
 
-    if plat == "windows":
+    if plat == "windows" and args.register_vulkan_layer:
         _install_vulkan_layer(install_dir, build_dir, args.version)
+
+    _write_runtime_manifest(
+        install_dir,
+        args.version,
+        source_commit,
+        plat,
+        vulkan_layer_registered=bool(plat == "windows" and args.register_vulkan_layer),
+    )
 
     _log("=== Done ===")
     _log(f'  export RENDERDOC_PYTHON_PATH="{install_dir}"')

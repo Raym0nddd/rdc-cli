@@ -160,11 +160,6 @@ def find_renderdoc() -> ModuleType | None:
     if cmd:
         candidates.append(str(Path(cmd).resolve().parent))
 
-    # Try already-importable module first (e.g. site-packages)
-    mod = _try_import()
-    if mod is not None:
-        return mod
-
     crash_prone_candidates: list[str] = []
 
     for path in candidates:
@@ -188,6 +183,13 @@ def find_renderdoc() -> ModuleType | None:
             # A module file is present but won't load (e.g. built for another
             # Python); keep it so the caller can tell this from "not found".
             _diagnostic = outcome
+
+    # Fall back to an already-importable module only after explicit and system
+    # candidates. A project directory named ``renderdoc`` otherwise becomes a
+    # PEP 420 namespace package and shadows the native replay module.
+    mod = _try_import()
+    if mod is not None:
+        return mod
 
     if crash_prone_candidates:
         _diagnostic = ProbeOutcome(
@@ -230,7 +232,11 @@ def find_renderdoccmd() -> Path | None:
 def _try_import() -> ModuleType | None:
     """Try bare import without path manipulation."""
     try:
-        return importlib.import_module("renderdoc")
+        module = importlib.import_module("renderdoc")
+        if not _is_replay_module(module):
+            sys.modules.pop("renderdoc", None)
+            return None
+        return module
     except Exception:  # noqa: BLE001
         return None
 
@@ -257,6 +263,7 @@ def _try_import_from(directory: str) -> ModuleType | None:
     if _is_arm_studio_dir(directory):
         _preload_librenderdoc(directory)
 
+    previous_module = sys.modules.pop("renderdoc", None)
     sys.path.insert(0, directory)
     try:
         mod = importlib.import_module("renderdoc")
@@ -265,8 +272,26 @@ def _try_import_from(directory: str) -> ModuleType | None:
             sys.path.remove(directory)
         if dll_dir_handle is not None:
             dll_dir_handle.close()
+        if previous_module is not None:
+            sys.modules["renderdoc"] = previous_module
+        return None
+    if not _is_replay_module(mod):
+        sys.modules.pop("renderdoc", None)
+        if directory in sys.path:
+            sys.path.remove(directory)
+        if dll_dir_handle is not None:
+            dll_dir_handle.close()
+        if previous_module is not None:
+            sys.modules["renderdoc"] = previous_module
         return None
     log.debug("renderdoc found at %s", directory)
     if dll_dir_handle is not None:
         _dll_dir_handles.append(dll_dir_handle)
     return mod
+
+
+def _is_replay_module(module: ModuleType) -> bool:
+    """Reject namespace/lookalike modules that do not expose replay entry points."""
+    return callable(getattr(module, "GetVersionString", None)) and callable(
+        getattr(module, "OpenCaptureFile", None)
+    )

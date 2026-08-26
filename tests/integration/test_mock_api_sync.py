@@ -175,7 +175,7 @@ STRUCT_PAIRS = [
 
 @pytest.mark.parametrize("real_name,mock_name", STRUCT_PAIRS, ids=[p[0] for p in STRUCT_PAIRS])
 def test_struct_fields_match(rd_module: Any, real_name: str, mock_name: str) -> None:
-    """Every field on a real struct must exist on the mock counterpart."""
+    """Real and mock structs must expose the same public data fields."""
     real_cls = getattr(rd_module, real_name)
     mock_cls = getattr(mock, mock_name)
 
@@ -184,6 +184,8 @@ def test_struct_fields_match(rd_module: Any, real_name: str, mock_name: str) -> 
 
     missing = real_fields - mock_fields
     assert not missing, f"mock {mock_name} missing fields: {sorted(missing)}"
+    stale = mock_fields - real_fields
+    assert not stale, f"mock {mock_name} has removed/stale fields: {sorted(stale)}"
 
 
 # ---------------------------------------------------------------------------

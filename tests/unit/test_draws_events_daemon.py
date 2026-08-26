@@ -9,6 +9,7 @@ from mock_renderdoc import (
     ActionDescription,
     ActionFlags,
     APIEvent,
+    BufferDescription,
     Descriptor,
     MockPipeState,
     ResourceDescription,
@@ -125,19 +126,16 @@ class TestStatsHandler:
                 resourceId=ResourceId(97),
                 name="albedo",
                 type=ResourceType.Texture,
-                byteSize=4194304,
             ),
             ResourceDescription(
                 resourceId=ResourceId(200),
                 name="shadowmap",
                 type=ResourceType.Texture,
-                byteSize=1048576,
             ),
             ResourceDescription(
                 resourceId=ResourceId(10),
                 name="vbuf",
                 type=ResourceType.Buffer,
-                byteSize=65536,
             ),
         ]
         state.res_rid_map = {int(r.resourceId): r for r in res}
@@ -146,12 +144,15 @@ class TestStatsHandler:
             97: TextureDescription(
                 resourceId=ResourceId(97),
                 format=ResourceFormat(name="R8G8B8A8_UNORM"),
+                byteSize=4194304,
             ),
             200: TextureDescription(
                 resourceId=ResourceId(200),
                 format=ResourceFormat(name="D32_FLOAT"),
+                byteSize=1048576,
             ),
         }
+        state.buf_map = {10: BufferDescription(resourceId=ResourceId(10), length=65536)}
         resp, _ = _handle_request(rpc_request("stats"), state)
         largest = resp["result"]["largest_resources"]
         assert len(largest) == 3
@@ -169,10 +170,10 @@ class TestStatsHandler:
                 resourceId=ResourceId(1),
                 name="buf",
                 type=ResourceType.Buffer,
-                byteSize=1024,
             ),
         ]
         state.res_rid_map = {int(r.resourceId): r for r in res}
+        state.buf_map = {1: BufferDescription(resourceId=ResourceId(1), length=1024)}
         resp, _ = _handle_request(rpc_request("stats"), state)
         largest = resp["result"]["largest_resources"]
         assert len(largest) == 1
@@ -185,16 +186,18 @@ class TestStatsHandler:
                 resourceId=ResourceId(1),
                 name="nosize",
                 type=ResourceType.Buffer,
-                byteSize=0,
             ),
             ResourceDescription(
                 resourceId=ResourceId(2),
                 name="hassize",
                 type=ResourceType.Buffer,
-                byteSize=512,
             ),
         ]
         state.res_rid_map = {int(r.resourceId): r for r in res}
+        state.buf_map = {
+            1: BufferDescription(resourceId=ResourceId(1), length=0),
+            2: BufferDescription(resourceId=ResourceId(2), length=512),
+        }
         resp, _ = _handle_request(rpc_request("stats"), state)
         largest = resp["result"]["largest_resources"]
         assert len(largest) == 1

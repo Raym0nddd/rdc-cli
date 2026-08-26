@@ -109,6 +109,11 @@ def test_doctor_hint_contains_docs_url() -> None:
 class TestWinPythonVersion:
     """TP-W3-001 through TP-W3-005."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_runtime_manifest(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep host replay runtime configuration out of path-probing tests."""
+        monkeypatch.delenv("RENDERDOC_PYTHON_PATH", raising=False)
+
     def test_non_windows_returns_ok(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """TP-W3-001: non-Windows returns ok=True, detail='n/a'."""
         monkeypatch.setattr("rdc.commands.doctor.sys.platform", "linux")
@@ -407,6 +412,87 @@ def test_run_doctor_windows_has_3_more_checks(monkeypatch: pytest.MonkeyPatch) -
     win_count = len(run_doctor())
 
     assert win_count - linux_count == 4
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_names"),
+    [
+        (
+            "replay",
+            {
+                "python",
+                "platform",
+                "renderdoc-module",
+                "replay-support",
+                "win-python-version",
+                "renderdoc-variant",
+            },
+        ),
+        ("build", {"python", "platform", "win-vs-build-tools"}),
+        (
+            "capture",
+            {
+                "python",
+                "platform",
+                "renderdoccmd",
+                "win-renderdoc-install",
+                "win-vulkan-layer",
+            },
+        ),
+        (
+            "full",
+            {
+                "python",
+                "platform",
+                "renderdoc-module",
+                "replay-support",
+                "win-python-version",
+                "renderdoc-variant",
+                "win-vs-build-tools",
+                "renderdoccmd",
+                "win-renderdoc-install",
+                "win-vulkan-layer",
+                "adb",
+                "android-apk",
+            },
+        ),
+    ],
+)
+def test_run_doctor_profile_routes_checks(
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+    expected_names: set[str],
+) -> None:
+    """Each profile runs only the checks required by its workflow."""
+    module = _fake_renderdoc()
+
+    def result(name: str) -> CheckResult:
+        return CheckResult(name, True, "ok")
+
+    monkeypatch.setattr("rdc.commands.doctor.sys.platform", "win32")
+    monkeypatch.setattr(
+        "rdc.commands.doctor._import_renderdoc",
+        lambda: (module, result("renderdoc-module")),
+    )
+    for function_name, check_name in {
+        "_check_python": "python",
+        "_check_platform": "platform",
+        "_check_replay_support": "replay-support",
+        "_check_renderdoc_variant": "renderdoc-variant",
+        "_check_win_python_version": "win-python-version",
+        "_check_win_vs_build_tools": "win-vs-build-tools",
+        "_check_renderdoccmd": "renderdoccmd",
+        "_check_win_renderdoc_install": "win-renderdoc-install",
+        "_check_win_vulkan_layer": "win-vulkan-layer",
+        "_check_adb": "adb",
+        "_check_android_apk": "android-apk",
+    }.items():
+        monkeypatch.setattr(
+            f"rdc.commands.doctor.{function_name}",
+            lambda *_args, name=check_name: result(name),
+        )
+
+    assert {check.name for check in run_doctor(profile)} == expected_names
 
 
 # ── _check_renderdoccmd() version probing ─────────────────────────────

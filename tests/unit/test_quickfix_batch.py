@@ -38,7 +38,6 @@ def _make_resources() -> list[rd.ResourceDescription]:
             resourceId=rd.ResourceId(100),
             name="Texture 100",
             type=rd.ResourceType.Texture,
-            byteSize=8294400,
         ),
         rd.ResourceDescription(
             resourceId=rd.ResourceId(200),
@@ -51,11 +50,12 @@ def _make_resources() -> list[rd.ResourceDescription]:
 def _make_vfs_state() -> DaemonState:
     actions = _make_actions()
     resources = _make_resources()
+    texture = rd.TextureDescription(resourceId=rd.ResourceId(100), byteSize=8294400)
     sf = SimpleNamespace(chunks=[])
     ctrl = SimpleNamespace(
         GetRootActions=lambda: actions,
         GetResources=lambda: resources,
-        GetTextures=lambda: [],
+        GetTextures=lambda: [texture],
         GetBuffers=lambda: [],
         GetAPIProperties=lambda: SimpleNamespace(pipelineType="Vulkan"),
         GetPipelineState=lambda: rd.MockPipeState(),
@@ -72,19 +72,20 @@ def _make_vfs_state() -> DaemonState:
         res_names={100: "Texture 100", 200: "Buffer 200"},
         res_types={100: "Texture", 200: "Buffer"},
         res_rid_map={int(r.resourceId): r for r in resources},
+        tex_map={100: texture},
     )
     state.vfs_tree = build_vfs_skeleton(actions, resources, sf=sf)
     return state
 
 
 # ---------------------------------------------------------------------------
-# Fix 1: byteSize
+# Fix 1: resource size
 # ---------------------------------------------------------------------------
 
 
-class TestFix1ByteSize:
-    def test_bytesize_read_from_full_resource(self) -> None:
-        """TC-1.1: byteSize read from res_rid_map via full resource object."""
+class TestFix1ResourceSize:
+    def test_texture_size_read_from_description(self) -> None:
+        """TC-1.1: texture byteSize is read from the texture description."""
         state = _make_vfs_state()
         resp, _ = _handle_request(
             rpc_request("vfs_ls", {"path": "/resources", "long": True}), state
@@ -94,10 +95,8 @@ class TestFix1ByteSize:
         assert child_100["size"] == 8294400
 
     def test_missing_bytesize_falls_back(self) -> None:
-        """TC-1.2: missing byteSize falls back to '-'."""
+        """TC-1.2: a resource without texture/buffer metadata falls back to '-'."""
         state = _make_vfs_state()
-        # Replace resource 200 with object lacking byteSize
-        state.res_rid_map[200] = SimpleNamespace()
         resp, _ = _handle_request(
             rpc_request("vfs_ls", {"path": "/resources", "long": True}), state
         )

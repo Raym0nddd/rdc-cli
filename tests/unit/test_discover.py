@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,6 +14,7 @@ from rdc.discover import (
     _get_diagnostic,
     _is_arm_studio_dir,
     _probe_candidate,
+    _try_import,
     _try_import_from,
     find_renderdoc,
 )
@@ -29,6 +30,7 @@ class TestTryImportFrom:
         fake_dir = str(tmp_path)
         fake_mod = types.ModuleType("renderdoc")
         fake_mod.GetVersionString = lambda: "1.41"  # type: ignore[attr-defined]
+        fake_mod.OpenCaptureFile = lambda: object()  # type: ignore[attr-defined]
 
         # Ensure directory is not already in sys.path
         if fake_dir in sys.path:
@@ -44,6 +46,14 @@ class TestTryImportFrom:
         # Cleanup
         sys.path.remove(fake_dir)
 
+    def test_bare_namespace_package_is_rejected(self) -> None:
+        """A cwd directory named renderdoc is not a replay module."""
+        import types
+
+        namespace = types.ModuleType("renderdoc")
+        with patch("importlib.import_module", return_value=namespace):
+            assert _try_import() is None
+
     def test_failure_removes_from_path(self, tmp_path: str) -> None:
         """On import failure, directory is removed from sys.path."""
 
@@ -58,6 +68,31 @@ class TestTryImportFrom:
 
         assert result is None
         assert fake_dir not in sys.path
+
+    def test_non_replay_module_cleans_up_candidate(self, tmp_path: str) -> None:
+        """A lookalike module restores the previous module and all path state."""
+        import types
+
+        fake_dir = str(tmp_path)
+        namespace = types.ModuleType("renderdoc")
+        previous = types.ModuleType("renderdoc")
+        dll_dir_handle = MagicMock()
+
+        if fake_dir in sys.path:
+            sys.path.remove(fake_dir)
+
+        with (
+            patch.dict(sys.modules, {"renderdoc": previous}),
+            patch("rdc.discover.sys.platform", "win32"),
+            patch("rdc.discover.os.add_dll_directory", return_value=dll_dir_handle),
+            patch("rdc.discover.importlib.import_module", return_value=namespace),
+        ):
+            result = _try_import_from(fake_dir)
+
+            assert result is None
+            assert fake_dir not in sys.path
+            assert sys.modules["renderdoc"] is previous
+            dll_dir_handle.close.assert_called_once_with()
 
 
 class TestProbeCandidate:

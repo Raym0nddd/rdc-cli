@@ -332,6 +332,7 @@ def _make_state_with_resources(pipe_state=None):
         width=1920,
         height=1080,
         format=ResourceFormat(name="R8G8B8A8_UNORM"),
+        byteSize=8294400,
     )
     buf = BufferDescription(resourceId=ResourceId(200), length=4096)
     pipe = pipe_state or MockPipeState()
@@ -354,10 +355,7 @@ def _make_state_with_resources(pipe_state=None):
         buf_map={200: buf},
         res_names={100: "tex0", 200: "buf0"},
         res_types={100: "Texture2D", 200: "Buffer"},
-        res_rid_map={
-            100: SimpleNamespace(byteSize=8294400),
-            200: SimpleNamespace(byteSize=4096),
-        },
+        res_rid_map={int(resource.resourceId): resource for resource in resources},
     )
     state.vfs_tree = build_vfs_skeleton(
         actions,

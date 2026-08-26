@@ -35,9 +35,9 @@ def test_build_renderdoc_script_syntax() -> None:
 
 
 def test_build_renderdoc_script_constants() -> None:
-    text = Path("scripts/build-renderdoc.sh").read_text()
+    text = Path("scripts/build-renderdoc.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in text
-    assert "v1.41" in text
+    assert RDOC_TAG in text
     assert "9d7e5013" in text
     assert "RENDERDOC_PYTHON_PATH" in text
     assert "DRENDERDOC_SWIG_PACKAGE" in text
@@ -46,14 +46,14 @@ def test_build_renderdoc_script_constants() -> None:
 def test_capture_fixture_script_exists() -> None:
     path = Path("scripts/capture_fixture.sh")
     assert path.exists()
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "renderdoccmd capture -c" in text
 
 
 def test_dockerfile_exists() -> None:
     path = Path("docker/Dockerfile")
     assert path.exists()
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "uv/install.sh" in text
 
 
@@ -65,9 +65,9 @@ def test_renderdoc_pin_consistency() -> None:
     fetches the SWIG fork archive must use the same ``SWIG_SHA256``.
     """
     for rel in _RENDERDOC_TAG_FILES:
-        text = Path(rel).read_text()
+        text = Path(rel).read_text(encoding="utf-8")
         assert RDOC_TAG in text, f"{rel} does not pin renderdoc tag {RDOC_TAG}"
 
     for rel in _SWIG_SHA_FILES:
-        text = Path(rel).read_text()
+        text = Path(rel).read_text(encoding="utf-8")
         assert SWIG_SHA256 in text, f"{rel} does not pin SWIG sha256 {SWIG_SHA256}"

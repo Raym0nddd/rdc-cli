@@ -457,7 +457,12 @@ class TestFileReadSecurity:
         temp_dir = tmp_path / "temp"
         temp_dir.mkdir()
         link = temp_dir / "escape"
-        link.symlink_to(secret)
+        try:
+            link.symlink_to(secret)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                pytest.skip("Windows user lacks permission to create symbolic links")
+            raise
 
         state = _make_state(temp_dir)
         resp, _ = _handle_file_read(1, {"path": str(link)}, state)

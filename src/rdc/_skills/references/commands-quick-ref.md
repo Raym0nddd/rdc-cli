@@ -482,6 +482,12 @@ Compare two RenderDoc captures side-by-side.
 
 Run environment checks for rdc-cli.
 
+**Options:**
+
+| Flag | Help | Type | Default |
+|------|------|------|---------|
+| `--profile` | Only run checks required for the selected workflow. | choice | full |
+
 ## `rdc draw`
 
 Show draw call detail.
@@ -1005,6 +1011,7 @@ Build and install the renderdoc Python module from source.
 | `--build-dir` | Build cache directory. | text |  |
 | `--version` | RenderDoc tag to build. | text |  |
 | `--jobs` | Parallel build jobs. | integer |  |
+| `--register-vulkan-layer` | Register the built capture layer in HKCU (disabled by default). | flag |  |
 | `--android` | Download Android APKs. | flag |  |
 | `--arm` | Download ARM Performance Studio (Mali). | flag |  |
 | `--arm-studio` | ARM Performance Studio local install path. | directory |  |

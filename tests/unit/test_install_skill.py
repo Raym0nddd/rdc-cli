@@ -36,7 +36,7 @@ def test_install_skill_overwrites_existing(fake_home: Path) -> None:
     (target / "SKILL.md").write_text("stale")
     result = CliRunner().invoke(install_skill_cmd)
     assert result.exit_code == 0
-    assert (target / "SKILL.md").read_text() != "stale"
+    assert (target / "SKILL.md").read_text(encoding="utf-8") != "stale"
 
 
 def test_install_skill_check_not_installed(fake_home: Path) -> None:

@@ -30,20 +30,20 @@ def test_skill_md_exists(project_root: Path) -> None:
 
 
 def test_skill_md_has_valid_frontmatter(project_root: Path) -> None:
-    text = (project_root / "src/rdc/_skills/SKILL.md").read_text()
+    text = (project_root / "src/rdc/_skills/SKILL.md").read_text(encoding="utf-8")
     assert text.startswith("---"), "Missing YAML frontmatter"
     assert "name:" in text
     assert "description:" in text
 
 
 def test_skill_md_name_is_rdc_cli(project_root: Path) -> None:
-    text = (project_root / "src/rdc/_skills/SKILL.md").read_text()
+    text = (project_root / "src/rdc/_skills/SKILL.md").read_text(encoding="utf-8")
     front = text.split("---")[1]
     assert "name: rdc-cli" in front or 'name: "rdc-cli"' in front
 
 
 def test_skill_md_description_has_triggers(project_root: Path) -> None:
-    text = (project_root / "src/rdc/_skills/SKILL.md").read_text()
+    text = (project_root / "src/rdc/_skills/SKILL.md").read_text(encoding="utf-8")
     for phrase in ("RenderDoc", ".rdc", "shader"):
         assert phrase in text, f"Trigger phrase {phrase!r} missing from SKILL.md"
 
@@ -55,7 +55,9 @@ def test_commands_ref_exists(project_root: Path) -> None:
 
 def test_commands_ref_is_fresh(project_root: Path) -> None:
     mod = _load_gen_skill_ref()
-    committed = (project_root / "src/rdc/_skills/references/commands-quick-ref.md").read_text()
+    committed = (project_root / "src/rdc/_skills/references/commands-quick-ref.md").read_text(
+        encoding="utf-8"
+    )
     assert committed == mod.generate_skill_ref(), (
         "commands-quick-ref.md is stale — run `pixi run gen-skill-ref` to regenerate"
     )

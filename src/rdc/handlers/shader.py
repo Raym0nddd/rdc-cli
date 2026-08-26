@@ -80,7 +80,7 @@ def _handle_shader_reflect(
         constant_blocks.append(
             {
                 "name": cb.name,
-                "bind_point": getattr(cb, "fixedBindNumber", getattr(cb, "bindPoint", 0)),
+                "bind_point": getattr(cb, "fixedBindNumber", 0),
                 "size": getattr(cb, "byteSize", 0),
                 "variables": len(getattr(cb, "variables", [])),
             }
@@ -121,7 +121,7 @@ def _handle_shader_constants(
     constants: list[dict[str, Any]] = []
 
     for idx, cb_def in enumerate(getattr(refl, "constantBlocks", [])):
-        bind_point = getattr(cb_def, "fixedBindNumber", getattr(cb_def, "bindPoint", 0))
+        bind_point = getattr(cb_def, "fixedBindNumber", 0)
         bound = pipe_state.GetConstantBlock(stage_val, idx, 0)
         desc = bound.descriptor
         cbuffer_vars = controller.GetCBufferVariableContents(

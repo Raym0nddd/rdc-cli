@@ -161,8 +161,14 @@ def _long_resources(node: VfsNode, state: DaemonState) -> list[dict[str, Any]]:
     for name in node.children:
         rid_int = int(name) if name.isdigit() else 0
         res_type = state.res_types.get(rid_int, "-")
-        rid_obj = state.res_rid_map.get(rid_int)
-        size = getattr(rid_obj, "byteSize", "-") if rid_obj else "-"
+        tex = state.tex_map.get(rid_int)
+        buf = state.buf_map.get(rid_int)
+        if tex is not None:
+            size = getattr(tex, "byteSize", "-")
+        elif buf is not None:
+            size = getattr(buf, "length", "-")
+        else:
+            size = "-"
         result.append(
             {
                 "name": name,

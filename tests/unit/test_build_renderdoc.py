@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import os
 import struct
 import sys
 import tarfile
@@ -141,23 +143,32 @@ def test_check_prerequisites_windows_vswhere_missing() -> None:
 
 def test_clone_renderdoc_fresh(tmp_path: Path) -> None:
     mock_run = MagicMock()
-    with patch("subprocess.run", mock_run):
-        br.clone_renderdoc(tmp_path)
+    with (
+        patch("subprocess.run", mock_run),
+        patch("rdc._build_renderdoc._source_commit", return_value=br.RDOC_COMMIT),
+    ):
+        commit = br.clone_renderdoc(tmp_path)
     mock_run.assert_called_once()
     args = mock_run.call_args[0][0]
     assert "git" in args
     assert "--depth" in args
     assert "1" in args
     assert "--branch" in args
-    assert "v1.41" in args
+    assert br.RDOC_TAG in args
+    assert commit == br.RDOC_COMMIT
 
 
 def test_clone_renderdoc_idempotent(tmp_path: Path) -> None:
     (tmp_path / "renderdoc").mkdir()
+    (tmp_path / "renderdoc" / ".git").mkdir()
     mock_run = MagicMock()
-    with patch("subprocess.run", mock_run):
-        br.clone_renderdoc(tmp_path)
+    with (
+        patch("subprocess.run", mock_run),
+        patch("rdc._build_renderdoc._source_commit", return_value=br.RDOC_COMMIT),
+    ):
+        commit = br.clone_renderdoc(tmp_path)
     mock_run.assert_not_called()
+    assert commit == br.RDOC_COMMIT
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +456,7 @@ def test_main_default_install_dir(tmp_path: Path) -> None:
         patch("rdc._build_renderdoc.default_install_dir", return_value=tmp_path / "install"),
         patch("rdc._build_renderdoc.check_prerequisites"),
         patch("rdc._build_renderdoc.verify_tool_versions"),
-        patch("rdc._build_renderdoc.clone_renderdoc"),
+        patch("rdc._build_renderdoc.clone_renderdoc", return_value=br.RDOC_COMMIT),
         patch("rdc._build_renderdoc.download_swig"),
         patch("rdc._build_renderdoc.configure_build"),
         patch("rdc._build_renderdoc.run_build"),
@@ -464,7 +475,7 @@ def test_main_custom_install_dir(tmp_path: Path) -> None:
         patch("rdc._build_renderdoc._artifacts_present", return_value=False),
         patch("rdc._build_renderdoc.check_prerequisites"),
         patch("rdc._build_renderdoc.verify_tool_versions"),
-        patch("rdc._build_renderdoc.clone_renderdoc"),
+        patch("rdc._build_renderdoc.clone_renderdoc", return_value=br.RDOC_COMMIT),
         patch("rdc._build_renderdoc.download_swig"),
         patch("rdc._build_renderdoc.configure_build"),
         patch("rdc._build_renderdoc.run_build"),
@@ -480,9 +491,10 @@ def test_main_custom_build_dir(tmp_path: Path) -> None:
     with (
         patch("rdc._build_renderdoc._platform", return_value="linux"),
         patch("rdc._build_renderdoc._artifacts_present", return_value=False),
+        patch("rdc._build_renderdoc.default_install_dir", return_value=tmp_path / "install"),
         patch("rdc._build_renderdoc.check_prerequisites"),
         patch("rdc._build_renderdoc.verify_tool_versions"),
-        patch("rdc._build_renderdoc.clone_renderdoc") as mock_clone,
+        patch("rdc._build_renderdoc.clone_renderdoc", return_value=br.RDOC_COMMIT) as mock_clone,
         patch("rdc._build_renderdoc.download_swig"),
         patch("rdc._build_renderdoc.configure_build"),
         patch("rdc._build_renderdoc.run_build"),
@@ -495,12 +507,65 @@ def test_main_custom_build_dir(tmp_path: Path) -> None:
 
 def test_main_idempotent_skip(tmp_path: Path) -> None:
     with (
-        patch("rdc._build_renderdoc._artifacts_present", return_value=True),
+        patch("rdc._build_renderdoc._runtime_matches", return_value=True),
         patch("rdc._build_renderdoc.default_install_dir", return_value=tmp_path),
         patch("rdc._build_renderdoc.check_prerequisites") as mock_prereq,
     ):
         br.main([])
     mock_prereq.assert_not_called()
+
+
+def test_runtime_manifest_matches_current_runtime(tmp_path: Path) -> None:
+    br._write_runtime_manifest(
+        tmp_path,
+        br.RDOC_TAG,
+        br.RDOC_COMMIT,
+        "windows",
+        vulkan_layer_registered=False,
+    )
+
+    with patch("rdc._build_renderdoc._artifacts_present", return_value=True):
+        assert br._runtime_matches(tmp_path, "windows", br.RDOC_TAG)
+
+    manifest = json.loads((tmp_path / br.RUNTIME_MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["renderdocCommit"] == br.RDOC_COMMIT
+    assert manifest["vulkanLayerRegistered"] is False
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("renderdocCommit", "wrong-commit"),
+        ("pythonVersion", "0.0"),
+        ("architectureBits", 32 if struct.calcsize("P") * 8 == 64 else 64),
+    ],
+)
+def test_runtime_manifest_rejects_incompatible_identity(
+    tmp_path: Path,
+    key: str,
+    value: object,
+) -> None:
+    br._write_runtime_manifest(
+        tmp_path,
+        br.RDOC_TAG,
+        br.RDOC_COMMIT,
+        "windows",
+        vulkan_layer_registered=False,
+    )
+    manifest_path = tmp_path / br.RUNTIME_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[key] = value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with patch("rdc._build_renderdoc._artifacts_present", return_value=True):
+        assert not br._runtime_matches(tmp_path, "windows", br.RDOC_TAG)
+
+
+def test_runtime_manifest_rejects_invalid_json(tmp_path: Path) -> None:
+    (tmp_path / br.RUNTIME_MANIFEST).write_text("{invalid", encoding="utf-8")
+
+    with patch("rdc._build_renderdoc._artifacts_present", return_value=True):
+        assert not br._runtime_matches(tmp_path, "windows", br.RDOC_TAG)
 
 
 def test_main_windows_uses_msbuild(tmp_path: Path) -> None:
@@ -510,7 +575,7 @@ def test_main_windows_uses_msbuild(tmp_path: Path) -> None:
         patch("rdc._build_renderdoc.default_install_dir", return_value=tmp_path / "install"),
         patch("rdc._build_renderdoc.check_prerequisites"),
         patch("rdc._build_renderdoc.verify_tool_versions"),
-        patch("rdc._build_renderdoc.clone_renderdoc"),
+        patch("rdc._build_renderdoc.clone_renderdoc", return_value=br.RDOC_COMMIT),
         patch(
             "rdc._build_renderdoc._prepare_win_python", return_value=Path("C:/prefix")
         ) as mock_prep,
@@ -529,14 +594,14 @@ def test_main_windows_forwards_version_to_vulkan_layer(tmp_path: Path) -> None:
         patch("rdc._build_renderdoc.default_install_dir", return_value=tmp_path / "install"),
         patch("rdc._build_renderdoc.check_prerequisites"),
         patch("rdc._build_renderdoc.verify_tool_versions"),
-        patch("rdc._build_renderdoc.clone_renderdoc"),
+        patch("rdc._build_renderdoc.clone_renderdoc", return_value=br.RDOC_COMMIT),
         patch("rdc._build_renderdoc._prepare_win_python", return_value=Path("C:/prefix")),
         patch("rdc._build_renderdoc._run_msbuild"),
         patch("rdc._build_renderdoc.copy_artifacts"),
         patch("rdc._build_renderdoc._install_vulkan_layer") as mock_layer,
     ):
-        br.main(["--version", "v1.44"])
-    assert mock_layer.call_args[0][2] == "v1.44"
+        br.main(["--version", br.RDOC_TAG, "--register-vulkan-layer"])
+    assert mock_layer.call_args[0][2] == br.RDOC_TAG
 
 
 # ---------------------------------------------------------------------------
@@ -562,9 +627,16 @@ def test_find_msbuild_missing(tmp_path: Path) -> None:
 
 
 def test_run_msbuild_args(tmp_path: Path) -> None:
-    sln = tmp_path / "renderdoc" / "renderdoc.sln"
-    sln.parent.mkdir(parents=True)
-    sln.write_text("fake")
+    project = (
+        tmp_path
+        / "renderdoc"
+        / "qrenderdoc"
+        / "Code"
+        / "pyrenderdoc"
+        / "pyrenderdoc_module.vcxproj"
+    )
+    project.parent.mkdir(parents=True)
+    project.write_text("fake")
     mock_run = MagicMock()
     prefix = Path("C:/python")
     with (
@@ -572,22 +644,36 @@ def test_run_msbuild_args(tmp_path: Path) -> None:
         patch("subprocess.run", mock_run),
     ):
         br._run_msbuild(tmp_path, prefix, jobs=6)
-    args = mock_run.call_args[0][0]
+    assert mock_run.call_count == 4
+    args = mock_run.call_args_list[-1][0][0]
     assert args[0] == "MSBuild.exe"
-    assert str(sln) in args
+    assert str(project) in args
+    assert "/t:Build" in args
     assert "/p:Configuration=Release" in args
     assert "/p:Platform=x64" in args
     assert "/p:PlatformToolset=v143" in args
+    assert f"/p:SolutionDir={tmp_path / 'renderdoc'}{os.sep}" in args
     assert "/m:6" in args
     env = mock_run.call_args[1]["env"]
     assert env["RENDERDOC_PYTHON_PREFIX64"] == str(prefix)
     assert env["CL"] == "/wd4996"
+    dependency_projects = [call[0][0][1] for call in mock_run.call_args_list[:-1]]
+    assert any(path.endswith("common.vcxproj") for path in dependency_projects)
+    assert any(path.endswith("crash_generation_client.vcxproj") for path in dependency_projects)
+    assert any(path.endswith("exception_handler.vcxproj") for path in dependency_projects)
 
 
 def test_run_msbuild_default_jobs(tmp_path: Path) -> None:
-    sln = tmp_path / "renderdoc" / "renderdoc.sln"
-    sln.parent.mkdir(parents=True)
-    sln.write_text("fake")
+    project = (
+        tmp_path
+        / "renderdoc"
+        / "qrenderdoc"
+        / "Code"
+        / "pyrenderdoc"
+        / "pyrenderdoc_module.vcxproj"
+    )
+    project.parent.mkdir(parents=True)
+    project.write_text("fake")
     mock_run = MagicMock()
     with (
         patch("rdc._build_renderdoc._find_msbuild", return_value="MSBuild.exe"),
@@ -595,7 +681,7 @@ def test_run_msbuild_default_jobs(tmp_path: Path) -> None:
         patch("os.cpu_count", return_value=12),
     ):
         br._run_msbuild(tmp_path, Path("C:/py"))
-    args = mock_run.call_args[0][0]
+    args = mock_run.call_args_list[-1][0][0]
     assert "/m:12" in args
 
 
@@ -610,6 +696,7 @@ def test_prepare_win_python_uses_base_prefix_not_prefix(tmp_path: Path) -> None:
     (base_prefix / "include" / "Python.h").write_text("fake")
     (base_prefix / "libs").mkdir()
     (base_prefix / "libs" / "python314.lib").write_text("fake")
+    (base_prefix / "python314.dll").write_text("fake")
 
     venv_prefix = tmp_path / "venv"
     venv_prefix.mkdir()
@@ -624,7 +711,11 @@ def test_prepare_win_python_uses_base_prefix_not_prefix(tmp_path: Path) -> None:
         mock_sys.stdout = sys.stdout
         result = br._prepare_win_python(src_dir)
 
-    assert result == base_prefix
+    assert result == tmp_path / "python-sdk-cp314-x64"
+    assert (result / "include" / "Python.h").is_file()
+    assert (result / "libs" / "python314.lib").is_file()
+    assert (result / "python314.dll").is_file()
+    assert not (base_prefix / "python314.zip").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +727,7 @@ def test_prepare_win_python_creates_dummy_zip(tmp_path: Path) -> None:
     (prefix / "include" / "Python.h").write_text("fake")
     (prefix / "libs").mkdir()
     (prefix / "libs" / "python314.lib").write_text("fake")
+    (prefix / "python314.dll").write_text("fake")
 
     src_dir = tmp_path / "src"
     src_dir.mkdir()
@@ -648,19 +740,20 @@ def test_prepare_win_python_creates_dummy_zip(tmp_path: Path) -> None:
         mock_sys.stdout = sys.stdout
         result = br._prepare_win_python(src_dir)
 
-    assert result == prefix
-    dummy = prefix / "python314.zip"
+    assert result == tmp_path / "python-sdk-cp314-x64"
+    dummy = result / "python314.zip"
     assert dummy.exists()
     with zipfile.ZipFile(dummy) as zf:
         assert "README" in zf.namelist()
 
 
-def test_prepare_win_python_patches_props(tmp_path: Path) -> None:
+def test_prepare_win_python_rejects_unsupported_props(tmp_path: Path) -> None:
     prefix = tmp_path / "prefix"
     (prefix / "include").mkdir(parents=True)
     (prefix / "include" / "Python.h").write_text("fake")
     (prefix / "libs").mkdir()
     (prefix / "libs" / "python314.lib").write_text("fake")
+    (prefix / "python314.dll").write_text("fake")
 
     src_dir = tmp_path / "src"
     props_dir = src_dir / "qrenderdoc" / "Code" / "pyrenderdoc"
@@ -673,15 +766,17 @@ def test_prepare_win_python_patches_props(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with patch("rdc._build_renderdoc.sys") as mock_sys:
+    original = props_file.read_text(encoding="utf-8")
+    with (
+        patch("rdc._build_renderdoc.sys") as mock_sys,
+        pytest.raises(SystemExit),
+    ):
         mock_sys.base_prefix = str(prefix)
         mock_sys.version_info = (3, 14, 3)
         mock_sys.stdout = sys.stdout
         br._prepare_win_python(src_dir)
 
-    content = props_file.read_text(encoding="utf-8")
-    assert "314" in content
-    assert content.index("314") < content.index("313")
+    assert props_file.read_text(encoding="utf-8") == original
 
 
 def test_prepare_win_python_missing_lib(tmp_path: Path) -> None:
@@ -706,6 +801,7 @@ def test_prepare_win_python_skips_existing_zip(tmp_path: Path) -> None:
     (prefix / "include" / "Python.h").write_text("fake")
     (prefix / "libs").mkdir()
     (prefix / "libs" / "python314.lib").write_text("fake")
+    (prefix / "python314.dll").write_text("fake")
     existing_zip = prefix / "python314.zip"
     existing_zip.write_text("already here")
 
@@ -713,9 +809,10 @@ def test_prepare_win_python_skips_existing_zip(tmp_path: Path) -> None:
         mock_sys.base_prefix = str(prefix)
         mock_sys.version_info = (3, 14, 3)
         mock_sys.stdout = sys.stdout
-        br._prepare_win_python(tmp_path / "src")
+        result = br._prepare_win_python(tmp_path / "src")
 
     assert existing_zip.read_text() == "already here"
+    assert (result / "python314.zip").is_file()
 
 
 def test_prepare_win_python_missing_python_h(tmp_path: Path) -> None:
@@ -739,6 +836,7 @@ def test_prepare_win_python_props_already_patched(tmp_path: Path) -> None:
     (prefix / "include" / "Python.h").write_text("fake")
     (prefix / "libs").mkdir()
     (prefix / "libs" / "python314.lib").write_text("fake")
+    (prefix / "python314.dll").write_text("fake")
 
     src_dir = tmp_path / "src"
     props_dir = src_dir / "qrenderdoc" / "Code" / "pyrenderdoc"

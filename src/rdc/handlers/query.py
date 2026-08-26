@@ -133,7 +133,7 @@ def _handle_shader(
                 "cbuffers": [
                     {
                         "name": cb.name,
-                        "slot": getattr(cb, "fixedBindNumber", getattr(cb, "bindPoint", 0)),
+                        "slot": getattr(cb, "fixedBindNumber", 0),
                         "vars": len(getattr(cb, "variables", [])),
                     }
                     for cb in getattr(refl, "constantBlocks", [])
@@ -408,13 +408,19 @@ def _handle_stats(
     # Largest resources by byte size
     largest: list[dict[str, Any]] = []
     for rid, res in state.res_rid_map.items():
-        size = getattr(res, "byteSize", 0)
+        tex = state.tex_map.get(rid)
+        buf = state.buf_map.get(rid)
+        if tex is not None:
+            size = getattr(tex, "byteSize", 0)
+        elif buf is not None:
+            size = getattr(buf, "length", 0)
+        else:
+            size = 0
         if size <= 0:
             continue
         t = getattr(res, "type", None)
         type_name = getattr(t, "name", str(t)) if t is not None else ""
         fmt = "-"
-        tex = state.tex_map.get(rid)
         if tex is not None:
             f = getattr(tex, "format", None)
             fmt = f.Name() if f and hasattr(f, "Name") else str(f) if f else "-"
@@ -463,7 +469,20 @@ def _handle_events(
     limit = params.get("limit")
     if limit is not None:
         flat = flat[: int(limit)]
-    events = [{"eid": a.eid, "type": _action_type_str(a.flags), "name": a.name} for a in flat]
+    events = [
+        {
+            "eid": a.eid,
+            "type": _action_type_str(a.flags),
+            "name": a.name,
+            "flags": a.flags,
+            "depth": a.depth,
+            "marker": a.parent_marker,
+            "pass": a.pass_name,
+            "num_indices": a.num_indices,
+            "num_instances": a.num_instances,
+        }
+        for a in flat
+    ]
     return _result_response(request_id, {"events": events}), True
 
 
