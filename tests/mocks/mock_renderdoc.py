@@ -1461,6 +1461,8 @@ class MockReplayController:
         self._counter_results: list[CounterResult] = []
         self._pixel_history_map: dict[tuple[int, int], list[PixelModification]] = {}
         self._pick_pixel_map: dict[tuple[int, int], PixelValue] = {}
+        self._pixel_history_calls: list[tuple[Any, int, int, Any, Any]] = []
+        self._pick_pixel_calls: list[tuple[Any, int, int, Any, Any]] = []
         self._debug_pixel_map: dict[tuple[int, int], ShaderDebugTrace] = {}
         self._debug_vertex_map: dict[int, ShaderDebugTrace] = {}
         self._debug_thread_map: dict[tuple[int, int, int, int, int, int], ShaderDebugTrace] = {}
@@ -1607,10 +1609,12 @@ class MockReplayController:
         self, texture: Any, x: int, y: int, sub: Any, type_cast: Any
     ) -> list[PixelModification]:
         """Mock PixelHistory -- returns modifications keyed by (x, y)."""
+        self._pixel_history_calls.append((texture, x, y, sub, type_cast))
         return self._pixel_history_map.get((x, y), [])
 
     def PickPixel(self, texture: Any, x: int, y: int, sub: Any, comp_type: Any) -> PixelValue:
         """Mock PickPixel -- returns PixelValue keyed by (x, y)."""
+        self._pick_pixel_calls.append((texture, x, y, sub, comp_type))
         return self._pick_pixel_map.get((int(x), int(y)), PixelValue())
 
     def DebugPixel(self, x: int, y: int, inputs: Any) -> ShaderDebugTrace:

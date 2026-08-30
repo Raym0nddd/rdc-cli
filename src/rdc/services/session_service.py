@@ -75,7 +75,11 @@ def start_daemon(
     # and block before serving its first ping if no one drains it, which deadlocks
     # wait_for_ping. A file has no buffer limit and we read its tail on failure.
     stderr_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
-        mode="w+", prefix="rdc-daemon-", suffix=".stderr", delete=False
+        mode="w+",
+        prefix="rdc-daemon-",
+        suffix=".stderr",
+        delete=False,
+        dir=_platform.replay_temp_dir(),
     )
     proc = subprocess.Popen(
         cmd,

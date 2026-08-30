@@ -162,11 +162,87 @@ def test_target_index_out_of_range() -> None:
     assert resp["error"]["code"] == -32001
 
 
-def test_msaa_texture() -> None:
+def test_msaa_sample_is_forwarded() -> None:
     state = _make_state(ms_samp=4)
-    resp, _ = _handle_request(rpc_request("pixel_history", {"x": 0, "y": 0}), state)
+    resp, _ = _handle_request(
+        rpc_request("pixel_history", {"x": 0, "y": 0, "sample": 3}), state
+    )
+    assert "result" in resp
+    ctrl = state.adapter.controller  # type: ignore[union-attr]
+    _, _, _, subresource, _ = ctrl._pixel_history_calls[-1]
+    assert subresource.sample == 3
+
+
+def test_msaa_sample_out_of_range() -> None:
+    state = _make_state(ms_samp=4)
+    resp, _ = _handle_request(
+        rpc_request("pixel_history", {"x": 0, "y": 0, "sample": 4}), state
+    )
     assert resp["error"]["code"] == -32001
-    assert "MSAA" in resp["error"]["message"]
+    assert "sample 4" in resp["error"]["message"]
+
+
+def test_arbitrary_resource_and_subresource_are_forwarded() -> None:
+    state = _make_state()
+    texture = state.tex_map[43]
+    texture.mips = 4
+    texture.arraysize = 4
+    texture.msSamp = 2
+    resp, _ = _handle_request(
+        rpc_request(
+            "pixel_history",
+            {
+                "x": 100,
+                "y": 100,
+                "resource_id": 43,
+                "mip": 2,
+                "slice": 3,
+                "sample": 1,
+                "type_cast": "UNorm",
+            },
+        ),
+        state,
+    )
+    result = resp["result"]
+    assert result["target"] == {"index": None, "id": 43}
+    assert result["resource"] == {
+        "id": 43,
+        "selection": "resource-id",
+        "targetIndex": None,
+    }
+    assert result["subresource"] == {"mip": 2, "slice": 3, "sample": 1}
+    assert result["typeCast"] == "UNorm"
+    ctrl = state.adapter.controller  # type: ignore[union-attr]
+    resource, _, _, subresource, comp_type = ctrl._pixel_history_calls[-1]
+    assert int(resource) == 43
+    assert (subresource.mip, subresource.slice, subresource.sample) == (2, 3, 1)
+    assert comp_type == rd.CompType.UNorm
+
+
+def test_resource_selection_uses_mip_dimensions() -> None:
+    state = _make_state()
+    state.tex_map[43].mips = 4
+    resp, _ = _handle_request(
+        rpc_request(
+            "pixel_history",
+            {"x": 256, "y": 0, "resource_id": 43, "mip": 2},
+        ),
+        state,
+    )
+    assert resp["error"]["code"] == -32001
+    assert "[256x192]" in resp["error"]["message"]
+
+
+def test_resource_and_target_rejected_by_handler() -> None:
+    state = _make_state()
+    resp, _ = _handle_request(
+        rpc_request(
+            "pixel_history",
+            {"x": 0, "y": 0, "target": 0, "resource_id": 43},
+        ),
+        state,
+    )
+    assert resp["error"]["code"] == -32602
 
 
 def test_no_adapter() -> None:

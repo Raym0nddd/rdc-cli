@@ -39,7 +39,7 @@
           "name": "doctor",
           "id": "doctor",
           "help": "Run environment checks for rdc-cli.",
-          "usage": "rdc doctor"
+          "usage": "rdc doctor [--profile CHOICE]"
         }
       ]
     },
@@ -242,13 +242,13 @@
           "name": "pixel",
           "id": "pixel",
           "help": "Query pixel history at (X, Y) for the current or specified event.",
-          "usage": "rdc pixel <X> <Y> [EID] [--target INTEGER] [--sample INTEGER] [--no-header] [--json] [--jsonl] [-q]"
+          "usage": "rdc pixel <X> <Y> [EID] [--target INTEGER] [--resource-id INTEGER] [--mip INTEGER] [--slice INTEGER] [--sample INTEGER] [--type-cast CHOICE] [--no-header] [--json] [--jsonl] [-q]"
         },
         {
           "name": "pick-pixel",
           "id": "pick-pixel",
-          "help": "Read pixel color at (X, Y) from the current render target.",
-          "usage": "rdc pick-pixel <X> <Y> [EID] [--target INTEGER] [--json]"
+          "help": "Read pixel color at (X, Y) from a texture at an event.",
+          "usage": "rdc pick-pixel <X> <Y> [EID] [--target INTEGER] [--resource-id INTEGER] [--mip INTEGER] [--slice INTEGER] [--sample INTEGER] [--type-cast CHOICE] [--json]"
         },
         {
           "name": "tex-stats",
@@ -556,7 +556,7 @@
           "name": "setup-renderdoc",
           "id": "setup-renderdoc",
           "help": "Build and install the renderdoc Python module from source.",
-          "usage": "rdc setup-renderdoc [INSTALL-DIR] [--build-dir TEXT] [--version TEXT] [--jobs INTEGER] [--android] [--arm] [--arm-studio DIRECTORY]"
+          "usage": "rdc setup-renderdoc [INSTALL-DIR] [--build-dir TEXT] [--version TEXT] [--jobs INTEGER] [--register-vulkan-layer] [--android] [--arm] [--arm-studio DIRECTORY]"
         }
       ]
     }

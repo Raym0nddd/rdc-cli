@@ -39,6 +39,7 @@ class TestCaptureRun:
             {
                 "app": "/usr/bin/app",
                 "args": "--foo",
+                "workdir": "/tmp/project",
                 "output": "/tmp/out.rdc",
                 "opts": {"api_validation": True},
             },
@@ -46,6 +47,7 @@ class TestCaptureRun:
         assert resp["result"]["path"] == "/tmp/out.rdc"
         assert terminated == [1234]
         assert called["args"] == "--foo"
+        assert called["workdir"] == "/tmp/project"
 
 
 class TestRemoteHandlers:

@@ -458,7 +458,12 @@ def _init_adapter_state(state: DaemonState) -> None:
 
     import tempfile
 
-    state.temp_dir = Path(tempfile.mkdtemp(prefix=f"rdc-{state.token[:8]}-"))
+    state.temp_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f"rdc-{state.token[:8]}-",
+            dir=_platform.replay_temp_dir(),
+        )
+    )
     atexit.register(_cleanup_temp, state)
 
 
@@ -602,7 +607,15 @@ def _load_remote_replay(state: DaemonState, remote_url: str) -> str | None:
             remote_path = state.capture
             import tempfile
 
-            local_tmp = Path(tempfile.mkdtemp(prefix="rdc-remote-")) / "capture.rdc"
+            local_tmp = (
+                Path(
+                    tempfile.mkdtemp(
+                        prefix="rdc-remote-",
+                        dir=_platform.replay_temp_dir(),
+                    )
+                )
+                / "capture.rdc"
+            )
             try:
                 remote.CopyCaptureFromRemote(
                     remote_path, str(local_tmp), make_progress_cb("downloading")

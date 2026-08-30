@@ -208,6 +208,7 @@ Execute application and capture a frame.
 | `--list-apis` | List capture APIs and exit. | flag |  |
 | `--frame` | Queue capture at frame N. | integer |  |
 | `--trigger` | Inject only; do not auto-capture. | flag |  |
+| `--workdir` | Working directory for the target process. | directory |  |
 | `--timeout` | Capture timeout in seconds. | float | 60.0 |
 | `--wait-for-exit` | Wait for process to exit. | flag |  |
 | `--keep-alive` | Keep target process running after capture. | flag |  |
@@ -219,6 +220,7 @@ Execute application and capture a frame.
 | `--soft-memory-limit` | Soft memory limit (MB). | integer |  |
 | `--delay-for-debugger` | Debugger attach delay (s). | integer |  |
 | `--json` | Output as JSON. | flag |  |
+| `--result-json` | Write the launch/capture result JSON to a file instead of stdout. | file |  |
 
 ## `rdc capture-copy`
 
@@ -713,7 +715,7 @@ List render passes.
 
 ## `rdc pick-pixel`
 
-Read pixel color at (X, Y) from the current render target.
+Read pixel color at (X, Y) from a texture at an event.
 
 **Arguments:**
 
@@ -727,7 +729,12 @@ Read pixel color at (X, Y) from the current render target.
 
 | Flag | Help | Type | Default |
 |------|------|------|---------|
-| `--target` | Color target index (default 0) | integer | 0 |
+| `--target` | Color target index (default 0) | integer |  |
+| `--resource-id` | Texture resource id instead of an output target | integer |  |
+| `--mip` | Mip level (default 0) | integer | 0 |
+| `--slice` | Array/depth slice (default 0) | integer | 0 |
+| `--sample` | MSAA sample index (default 0) | integer | 0 |
+| `--type-cast` | RenderDoc component interpretation | choice | Typeless |
 | `--json` | JSON output | flag |  |
 
 ## `rdc pipeline`
@@ -763,8 +770,12 @@ Query pixel history at (X, Y) for the current or specified event.
 
 | Flag | Help | Type | Default |
 |------|------|------|---------|
-| `--target` | Color target index (default 0) | integer | 0 |
+| `--target` | Color target index (default 0) | integer |  |
+| `--resource-id` | Texture resource id instead of an output target | integer |  |
+| `--mip` | Mip level (default 0) | integer | 0 |
+| `--slice` | Array/depth slice (default 0) | integer | 0 |
 | `--sample` | MSAA sample index (default 0) | integer | 0 |
+| `--type-cast` | RenderDoc component interpretation | choice | Typeless |
 | `--no-header` | Omit TSV header | flag |  |
 | `--json` | JSON output | flag |  |
 | `--jsonl` | JSONL output | flag |  |

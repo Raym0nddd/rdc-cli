@@ -144,11 +144,43 @@ def test_pick_pixel_eid_out_of_range() -> None:
     assert resp["error"]["code"] == -32002
 
 
-def test_pick_pixel_msaa_rejected() -> None:
+def test_pick_pixel_msaa_sample_is_forwarded() -> None:
     state = _make_state(ms_samp=4)
-    resp, _ = _handle_request(rpc_request("pick_pixel", {"x": 0, "y": 0}), state)
-    assert resp["error"]["code"] == -32001
-    assert "MSAA" in resp["error"]["message"]
+    resp, _ = _handle_request(
+        rpc_request("pick_pixel", {"x": 0, "y": 0, "sample": 2}), state
+    )
+    assert "result" in resp
+    ctrl = state.adapter.controller  # type: ignore[union-attr]
+    _, _, _, subresource, _ = ctrl._pick_pixel_calls[-1]
+    assert subresource.sample == 2
+
+
+def test_pick_pixel_explicit_resource_and_type_cast() -> None:
+    state = _make_state()
+    texture = state.tex_map[43]
+    texture.mips = 3
+    texture.arraysize = 2
+    resp, _ = _handle_request(
+        rpc_request(
+            "pick_pixel",
+            {
+                "x": 10,
+                "y": 20,
+                "resource_id": 43,
+                "mip": 1,
+                "slice": 1,
+                "type_cast": "Float",
+            },
+        ),
+        state,
+    )
+    assert resp["result"]["resource"]["selection"] == "resource-id"
+    assert resp["result"]["subresource"] == {"mip": 1, "slice": 1, "sample": 0}
+    ctrl = state.adapter.controller  # type: ignore[union-attr]
+    resource, _, _, subresource, comp_type = ctrl._pick_pixel_calls[-1]
+    assert int(resource) == 43
+    assert (subresource.mip, subresource.slice, subresource.sample) == (1, 1, 0)
+    assert comp_type == rd.CompType.Float
 
 
 # ---------------------------------------------------------------------------

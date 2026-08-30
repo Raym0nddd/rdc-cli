@@ -476,13 +476,74 @@ def _parse_version(version: str) -> tuple[int, int]:
     return int(parts[0]), int(parts[1])
 
 
-def _install_vulkan_layer(install_dir: Path, build_dir: Path, version: str = RDOC_TAG) -> None:
-    """Copy Vulkan layer JSON and register as implicit layer on Windows.
+def _default_vulkan_layer_manifest(version: str) -> dict[str, object]:
+    """Return the pinned Windows Vulkan layer manifest used for process-local capture."""
+    major, minor = _parse_version(version)
+    return {
+        "file_format_version": "1.1.2",
+        "layer": {
+            "name": "VK_LAYER_RENDERDOC_Capture",
+            "type": "GLOBAL",
+            "library_path": ".\\renderdoc.dll",
+            "api_version": "1.4.324",
+            "implementation_version": str(minor),
+            "description": "Debugging capture layer for RenderDoc",
+            "functions": {
+                "vkGetInstanceProcAddr": "VK_LAYER_RENDERDOC_CaptureGetInstanceProcAddr",
+                "vkGetDeviceProcAddr": "VK_LAYER_RENDERDOC_CaptureGetDeviceProcAddr",
+                "vkNegotiateLoaderLayerInterfaceVersion": (
+                    "VK_LAYER_RENDERDOC_CaptureNegotiateLoaderLayerInterfaceVersion"
+                ),
+            },
+            "pre_instance_functions": {
+                "vkEnumerateInstanceExtensionProperties": (
+                    "VK_LAYER_RENDERDOC_CaptureEnumerateInstanceExtensionProperties"
+                )
+            },
+            "instance_extensions": [
+                {"name": "VK_EXT_debug_utils", "spec_version": "1"}
+            ],
+            "device_extensions": [
+                {
+                    "name": "VK_EXT_debug_marker",
+                    "spec_version": "4",
+                    "entrypoints": [
+                        "vkDebugMarkerSetObjectTagEXT",
+                        "vkDebugMarkerSetObjectNameEXT",
+                        "vkCmdDebugMarkerBeginEXT",
+                        "vkCmdDebugMarkerEndEXT",
+                        "vkCmdDebugMarkerInsertEXT",
+                    ],
+                },
+                {
+                    "name": "VK_EXT_tooling_info",
+                    "spec_version": "1",
+                    "entrypoints": ["vkGetPhysicalDeviceToolPropertiesEXT"],
+                },
+            ],
+            "enable_environment": {"ENABLE_VULKAN_RENDERDOC_CAPTURE": "1"},
+            "disable_environment": {
+                f"DISABLE_VULKAN_RENDERDOC_CAPTURE_{major}_{minor}": "1"
+            },
+        },
+    }
+
+
+def _install_vulkan_layer(
+    install_dir: Path,
+    build_dir: Path,
+    version: str = RDOC_TAG,
+    *,
+    register: bool = True,
+) -> bool:
+    """Install a process-local Vulkan layer manifest and optionally register it.
 
     Upstream substitutes ``renderdoc.json`` via CMake ``configure_file``, but that block is
     UNIX-only, so on Windows the template ships with unsubstituted ``@...@`` placeholders.
-    Resolve every templated field here so the layer can self-enable.
+    Resolve every templated field here so the layer can self-enable. Cached replay runtimes may
+    no longer have their source tree, so a pinned v1.45 manifest is used as the fallback.
     """
+    install_dir.mkdir(parents=True, exist_ok=True)
     src_dir = build_dir / "renderdoc"
 
     # Find layer JSON from build output
@@ -494,14 +555,12 @@ def _install_vulkan_layer(install_dir: Path, build_dir: Path, version: str = RDO
         if candidate.is_file():
             layer_src = candidate
             break
-    if layer_src is None:
-        _log("WARNING: Vulkan layer JSON not found in source tree, skipping layer registration")
-        return
-
-    import json
-
     major, minor = _parse_version(version)
-    data = json.loads(layer_src.read_text(encoding="utf-8"))
+    data = (
+        json.loads(layer_src.read_text(encoding="utf-8"))
+        if layer_src is not None
+        else _default_vulkan_layer_manifest(version)
+    )
     layer = data["layer"]
     layer["name"] = "VK_LAYER_RENDERDOC_Capture"
     layer["library_path"] = ".\\renderdoc.dll"
@@ -517,18 +576,37 @@ def _install_vulkan_layer(install_dir: Path, build_dir: Path, version: str = RDO
 
     layer_dst = install_dir / "renderdoc.json"
     layer_dst.write_text(serialized, encoding="utf-8")
-    _log(f"Vulkan layer JSON installed to {layer_dst}")
+    _log(f"Vulkan process-local layer JSON installed to {layer_dst}")
 
-    # Register in Windows registry
-    import winreg
+    if register:
+        # Register in Windows registry
+        import winreg
+
+        key_path = r"SOFTWARE\Khronos\Vulkan\ImplicitLayers"
+        try:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:  # type: ignore[attr-defined,unused-ignore]
+                winreg.SetValueEx(key, str(layer_dst), 0, winreg.REG_DWORD, 0)  # type: ignore[attr-defined,unused-ignore]
+            _log(f"Vulkan implicit layer registered in HKCU\\{key_path}")
+        except OSError as exc:
+            _log(f"WARNING: failed to register Vulkan layer in registry: {exc}")
+
+    return _is_vulkan_layer_registered(layer_dst)
+
+
+def _is_vulkan_layer_registered(layer_manifest: Path) -> bool:
+    """Return whether the runtime manifest is enabled in the current-user registry."""
+    try:
+        import winreg
+    except ImportError:
+        return False
 
     key_path = r"SOFTWARE\Khronos\Vulkan\ImplicitLayers"
     try:
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:  # type: ignore[attr-defined,unused-ignore]
-            winreg.SetValueEx(key, str(layer_dst), 0, winreg.REG_DWORD, 0)  # type: ignore[attr-defined,unused-ignore]
-        _log(f"Vulkan implicit layer registered in HKCU\\{key_path}")
-    except OSError as exc:
-        _log(f"WARNING: failed to register Vulkan layer in registry: {exc}")
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:  # type: ignore[attr-defined,unused-ignore]
+            value, value_type = winreg.QueryValueEx(key, str(layer_manifest))  # type: ignore[attr-defined,unused-ignore]
+    except OSError:
+        return False
+    return value_type == winreg.REG_DWORD and value == 0  # type: ignore[attr-defined,unused-ignore]
 
 
 def _android_apk_dir(lib_dir: Path) -> Path:
@@ -837,10 +915,12 @@ def _write_runtime_manifest(
     plat: str,
     *,
     vulkan_layer_registered: bool,
+    vulkan_layer_manifest_available: bool = False,
 ) -> None:
     install_dir.mkdir(parents=True, exist_ok=True)
     manifest = _runtime_identity(version, commit, plat)
     manifest["vulkanLayerRegistered"] = vulkan_layer_registered
+    manifest["vulkanLayerManifestAvailable"] = vulkan_layer_manifest_available
     (install_dir / RUNTIME_MANIFEST).write_text(
         json.dumps(manifest, indent=2) + "\n",
         encoding="utf-8",
@@ -873,6 +953,21 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     if _runtime_matches(install_dir, plat, args.version):
+        if plat == "windows":
+            vulkan_layer_registered = _install_vulkan_layer(
+                install_dir,
+                build_dir,
+                args.version,
+                register=args.register_vulkan_layer,
+            )
+            _write_runtime_manifest(
+                install_dir,
+                args.version,
+                RDOC_COMMIT,
+                plat,
+                vulkan_layer_registered=vulkan_layer_registered,
+                vulkan_layer_manifest_available=True,
+            )
         _log(f"renderdoc already exists at {install_dir}/")
         return
     if _artifacts_present(install_dir, plat):
@@ -903,15 +998,22 @@ def main(argv: list[str] | None = None) -> None:
 
     copy_artifacts(build_dir, install_dir, plat)
 
-    if plat == "windows" and args.register_vulkan_layer:
-        _install_vulkan_layer(install_dir, build_dir, args.version)
+    vulkan_layer_registered = False
+    if plat == "windows":
+        vulkan_layer_registered = _install_vulkan_layer(
+            install_dir,
+            build_dir,
+            args.version,
+            register=args.register_vulkan_layer,
+        )
 
     _write_runtime_manifest(
         install_dir,
         args.version,
         source_commit,
         plat,
-        vulkan_layer_registered=bool(plat == "windows" and args.register_vulkan_layer),
+        vulkan_layer_registered=vulkan_layer_registered,
+        vulkan_layer_manifest_available=bool(plat == "windows"),
     )
 
     _log("=== Done ===")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import sys
@@ -135,11 +136,29 @@ def _build_launch_env(rd: Any) -> list[Any]:
 
     module_path = getattr(rd, "__file__", None)
     if not module_path:
-        return []
+        raise RuntimeError("loaded RenderDoc module has no filesystem path")
 
     renderdoc_dir = Path(module_path).resolve().parent
-    if not (renderdoc_dir / "renderdoc.json").is_file():
-        return []
+    layer_manifest = renderdoc_dir / "renderdoc.json"
+    if not layer_manifest.is_file():
+        raise RuntimeError(
+            "project RenderDoc runtime has no renderdoc.json; rerun setup-renderdoc "
+            "before capture"
+        )
+    try:
+        manifest = json.loads(layer_manifest.read_text(encoding="utf-8"))
+        layer = manifest["layer"]
+        layer_name = layer["name"]
+        relative_library = str(layer["library_path"]).replace("\\", "/")
+        layer_library = (renderdoc_dir / relative_library).resolve()
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise RuntimeError(f"invalid RenderDoc Vulkan layer manifest: {error}") from error
+    if layer_name != "VK_LAYER_RENDERDOC_Capture":
+        raise RuntimeError(f"unexpected RenderDoc Vulkan layer name: {layer_name}")
+    if layer_library != (renderdoc_dir / "renderdoc.dll").resolve():
+        raise RuntimeError(
+            "RenderDoc Vulkan layer must reference the runtime-local renderdoc.dll"
+        )
 
     return [
         _make_env_mod(rd, "ENABLE_VULKAN_RENDERDOC_CAPTURE", "1"),

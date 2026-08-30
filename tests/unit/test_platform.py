@@ -36,12 +36,14 @@ class TestDataDir:
     def test_returns_home_dot_rdc(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """TP-W1-001: Unix data_dir is ~/.rdc when no override is set."""
         monkeypatch.delenv("RDC_DATA_DIR", raising=False)
+        monkeypatch.setattr("rdc._platform._rmrenderer_workspace", lambda: None)
         monkeypatch.setattr("rdc._platform.Path.home", staticmethod(lambda: tmp_path))
         assert data_dir() == tmp_path / ".rdc"
 
     def test_no_side_effects(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """TP-W1-002: data_dir does not create the directory."""
         monkeypatch.delenv("RDC_DATA_DIR", raising=False)
+        monkeypatch.setattr("rdc._platform._rmrenderer_workspace", lambda: None)
         monkeypatch.setattr("rdc._platform.Path.home", staticmethod(lambda: tmp_path))
         result = data_dir()
         assert not result.exists()
@@ -52,6 +54,7 @@ class TestDataDir:
         """RDC_DATA_DIR override wins over the home-based default."""
         custom = tmp_path / "custom-data"
         monkeypatch.setenv("RDC_DATA_DIR", str(custom))
+        monkeypatch.setattr("rdc._platform._rmrenderer_workspace", lambda: tmp_path / "project")
         # Even with a different home, the override must take precedence.
         monkeypatch.setattr("rdc._platform.Path.home", staticmethod(lambda: tmp_path / "elsewhere"))
         assert data_dir() == custom
@@ -61,8 +64,18 @@ class TestDataDir:
     ) -> None:
         """An empty RDC_DATA_DIR falls back to the home-based default."""
         monkeypatch.setenv("RDC_DATA_DIR", "")
+        monkeypatch.setattr("rdc._platform._rmrenderer_workspace", lambda: None)
         monkeypatch.setattr("rdc._platform.Path.home", staticmethod(lambda: tmp_path))
         assert data_dir() == tmp_path / ".rdc"
+
+    def test_rmrenderer_checkout_defaults_to_project_data(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """rmRenderer's editable install keeps state inside renderdoc/rdc-data."""
+        workspace = tmp_path / "renderdoc"
+        monkeypatch.delenv("RDC_DATA_DIR", raising=False)
+        monkeypatch.setattr("rdc._platform._rmrenderer_workspace", lambda: workspace)
+        assert data_dir() == workspace / "rdc-data"
 
     def test_env_override_isolates_session_roundtrip(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

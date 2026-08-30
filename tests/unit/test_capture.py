@@ -279,6 +279,29 @@ def test_json_output(monkeypatch: Any) -> None:
         raise AssertionError("no JSON line found in output")
 
 
+def test_result_json_isolated_from_stdout(monkeypatch: Any, tmp_path: Path) -> None:
+    """--result-json writes a machine result without using inherited stdout."""
+    monkeypatch.setattr("rdc.commands.capture.find_renderdoc", lambda: MagicMock())
+    monkeypatch.setattr(
+        "rdc.commands.capture.execute_and_capture",
+        lambda *a, **kw: _make_capture_result(success=True, path="", ident=99999),
+    )
+    monkeypatch.setattr(
+        "rdc.commands.capture.build_capture_options",
+        lambda opts: MagicMock(),
+    )
+    result_path = tmp_path / "result.json"
+
+    result = CliRunner().invoke(
+        capture_cmd,
+        ["--trigger", "--result-json", str(result_path), "--", "/usr/bin/app"],
+    )
+
+    assert result.exit_code == 0
+    assert result.output == ""
+    assert json.loads(result_path.read_text(encoding="utf-8"))["ident"] == 99999
+
+
 def test_all_options(monkeypatch: Any) -> None:
     """Verify CaptureOptions flags are forwarded to build_capture_options."""
     captured_opts: list[dict[str, Any]] = []
@@ -330,6 +353,30 @@ def test_capture_trigger_mode(monkeypatch: Any) -> None:
     result = CliRunner().invoke(capture_cmd, ["--trigger", "--", "/usr/bin/app"])
     assert result.exit_code == 0
     assert call_kwargs[0]["trigger"] is True
+
+
+def test_workdir_forwarded(monkeypatch: Any, tmp_path: Path) -> None:
+    """--workdir is resolved and forwarded to ExecuteAndInject."""
+    call_kwargs: list[dict[str, Any]] = []
+
+    def fake_capture(*args: Any, **kwargs: Any) -> Any:
+        call_kwargs.append(kwargs)
+        return _make_capture_result(success=True, path="", ident=99999)
+
+    monkeypatch.setattr("rdc.commands.capture.find_renderdoc", lambda: MagicMock())
+    monkeypatch.setattr("rdc.commands.capture.execute_and_capture", fake_capture)
+    monkeypatch.setattr(
+        "rdc.commands.capture.build_capture_options",
+        lambda opts: MagicMock(),
+    )
+
+    result = CliRunner().invoke(
+        capture_cmd,
+        ["--trigger", "--workdir", str(tmp_path), "--", "/usr/bin/app"],
+    )
+
+    assert result.exit_code == 0
+    assert call_kwargs[0]["workdir"] == str(tmp_path.resolve())
 
 
 def test_app_args_forwarded(monkeypatch: Any) -> None:
@@ -522,11 +569,20 @@ def test_split_mode_calls_daemon(monkeypatch: Any, tmp_path: Path) -> None:
 
     result = CliRunner().invoke(
         capture_cmd,
-        ["--api-validation", "--", "/usr/bin/app", "--width", "800"],
+        [
+            "--api-validation",
+            "--workdir",
+            str(tmp_path),
+            "--",
+            "/usr/bin/app",
+            "--width",
+            "800",
+        ],
     )
     assert result.exit_code == 0
     assert captured["method"] == "capture_run"
     assert captured["payload"]["opts"] == {"api_validation": True}
+    assert captured["payload"]["workdir"] == str(tmp_path.resolve())
     assert "--width" in captured["payload"]["args"]
     assert (tmp_path / "rpc.rdc").exists()
     assert (tmp_path / "rpc.rdc").read_bytes() == b"rdc"

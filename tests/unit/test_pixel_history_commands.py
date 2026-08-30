@@ -134,6 +134,50 @@ def test_sample_forwarded(monkeypatch: Any) -> None:
     assert _captured_params["params"]["sample"] == 2
 
 
+def test_resource_subresource_and_type_cast_forwarded(monkeypatch: Any) -> None:
+    _patch(monkeypatch, _HAPPY_RESPONSE)
+    result = CliRunner().invoke(
+        main,
+        [
+            "pixel",
+            "10",
+            "20",
+            "120",
+            "--resource-id",
+            "43",
+            "--mip",
+            "2",
+            "--slice",
+            "3",
+            "--sample",
+            "1",
+            "--type-cast",
+            "unorm",
+        ],
+    )
+    assert result.exit_code == 0
+    assert _captured_params["params"] == {
+        "x": 10,
+        "y": 20,
+        "eid": 120,
+        "resource_id": 43,
+        "mip": 2,
+        "slice": 3,
+        "sample": 1,
+        "type_cast": "UNorm",
+    }
+
+
+def test_target_and_resource_id_are_mutually_exclusive(monkeypatch: Any) -> None:
+    _patch(monkeypatch, _HAPPY_RESPONSE)
+    result = CliRunner().invoke(
+        main,
+        ["pixel", "10", "20", "--target", "0", "--resource-id", "43"],
+    )
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+
+
 # ---------------------------------------------------------------------------
 # JSON output
 # ---------------------------------------------------------------------------

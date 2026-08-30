@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
+import json
 import signal
 import sys
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import mock_renderdoc as mock_rd
 import pytest
+
+
+def _write_runtime_layer(directory: Any) -> None:
+    (directory / "renderdoc.dll").touch()
+    (directory / "renderdoc.json").write_text(
+        json.dumps(
+            {
+                "layer": {
+                    "name": "VK_LAYER_RENDERDOC_Capture",
+                    "library_path": ".\\renderdoc.dll",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _make_mock_rd(
@@ -18,6 +36,10 @@ def _make_mock_rd(
     messages: list[mock_rd.TargetControlMessage] | None = None,
 ) -> SimpleNamespace:
     """Build a fake renderdoc module with configurable ExecuteAndInject and TargetControl."""
+    runtime_directory = tempfile.TemporaryDirectory()
+    runtime_path = Path(runtime_directory.name)
+    (runtime_path / "renderdoc.pyd").touch()
+    _write_runtime_layer(runtime_path)
     tc = mock_rd.MockTargetControl(messages=messages)
     calls: dict[str, list[Any]] = {"inject": [], "tc_create": [], "queue": [], "trigger": []}
 
@@ -56,6 +78,7 @@ def _make_mock_rd(
         return tc
 
     rd = SimpleNamespace(
+        __file__=str(runtime_path / "renderdoc.pyd"),
         ExecuteAndInject=fake_execute,
         CreateTargetControl=fake_create_tc,
         GetDefaultCaptureOptions=mock_rd.GetDefaultCaptureOptions,
@@ -65,6 +88,7 @@ def _make_mock_rd(
         EnvSep=mock_rd.EnvSep,
         _calls=calls,
         _tc=tc,
+        _runtime_directory=runtime_directory,
     )
     return rd
 
@@ -519,7 +543,7 @@ class TestBuildLaunchEnv:
         )
         assert _build_launch_env(rd) == []
 
-    def test_win32_no_file_attr_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_win32_no_file_attr_fails_loudly(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from rdc.capture_core import _build_launch_env
 
         monkeypatch.setattr("rdc.capture_core.sys.platform", "win32")
@@ -528,10 +552,10 @@ class TestBuildLaunchEnv:
             EnvMod=mock_rd.EnvMod,
             EnvSep=mock_rd.EnvSep,
         )
-        # No __file__ attribute
-        assert _build_launch_env(rd) == []
+        with pytest.raises(RuntimeError, match="no filesystem path"):
+            _build_launch_env(rd)
 
-    def test_win32_missing_renderdoc_json_returns_empty(
+    def test_win32_missing_renderdoc_json_fails_loudly(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
     ) -> None:
         from rdc.capture_core import _build_launch_env
@@ -545,8 +569,8 @@ class TestBuildLaunchEnv:
             EnvMod=mock_rd.EnvMod,
             EnvSep=mock_rd.EnvSep,
         )
-        # No renderdoc.json sibling
-        assert _build_launch_env(rd) == []
+        with pytest.raises(RuntimeError, match="no renderdoc.json"):
+            _build_launch_env(rd)
 
     def test_win32_with_renderdoc_json_returns_two_mods(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
@@ -556,7 +580,7 @@ class TestBuildLaunchEnv:
         monkeypatch.setattr("rdc.capture_core.sys.platform", "win32")
         module_file = tmp_path / "renderdoc.pyd"
         module_file.touch()
-        (tmp_path / "renderdoc.json").write_text("{}")
+        _write_runtime_layer(tmp_path)
         rd = SimpleNamespace(
             __file__=str(module_file),
             EnvironmentModification=mock_rd.EnvironmentModification,
@@ -589,7 +613,7 @@ class TestExecuteAndCaptureEnvWiring:
         monkeypatch.setattr("rdc.capture_core.sys.platform", "win32")
         module_file = tmp_path / "renderdoc.pyd"
         module_file.touch()
-        (tmp_path / "renderdoc.json").write_text("{}")
+        _write_runtime_layer(tmp_path)
 
         rd = _make_mock_rd(messages=[self._cap_msg()])
         rd.__file__ = str(module_file)

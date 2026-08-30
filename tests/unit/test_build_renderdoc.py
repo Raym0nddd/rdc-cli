@@ -515,6 +515,33 @@ def test_main_idempotent_skip(tmp_path: Path) -> None:
     mock_prereq.assert_not_called()
 
 
+def test_main_windows_repairs_process_local_layer_for_cached_runtime(
+    tmp_path: Path,
+) -> None:
+    install_dir = tmp_path / "install"
+    build_dir = tmp_path / "build"
+    with (
+        patch("rdc._build_renderdoc._platform", return_value="windows"),
+        patch("rdc._build_renderdoc._runtime_matches", return_value=True),
+        patch("rdc._build_renderdoc.default_install_dir", return_value=install_dir),
+        patch(
+            "rdc._build_renderdoc._install_vulkan_layer",
+            return_value=True,
+        ) as mock_layer,
+        patch("rdc._build_renderdoc._write_runtime_manifest") as mock_manifest,
+    ):
+        br.main(["--build-dir", str(build_dir)])
+
+    mock_layer.assert_called_once_with(
+        install_dir,
+        build_dir,
+        br.RDOC_TAG,
+        register=False,
+    )
+    assert mock_manifest.call_args.kwargs["vulkan_layer_registered"] is True
+    assert mock_manifest.call_args.kwargs["vulkan_layer_manifest_available"] is True
+
+
 def test_runtime_manifest_matches_current_runtime(tmp_path: Path) -> None:
     br._write_runtime_manifest(
         tmp_path,
@@ -598,10 +625,14 @@ def test_main_windows_forwards_version_to_vulkan_layer(tmp_path: Path) -> None:
         patch("rdc._build_renderdoc._prepare_win_python", return_value=Path("C:/prefix")),
         patch("rdc._build_renderdoc._run_msbuild"),
         patch("rdc._build_renderdoc.copy_artifacts"),
-        patch("rdc._build_renderdoc._install_vulkan_layer") as mock_layer,
+        patch(
+            "rdc._build_renderdoc._install_vulkan_layer",
+            return_value=True,
+        ) as mock_layer,
     ):
         br.main(["--version", br.RDOC_TAG, "--register-vulkan-layer"])
     assert mock_layer.call_args[0][2] == br.RDOC_TAG
+    assert mock_layer.call_args.kwargs["register"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -870,8 +901,23 @@ def _fake_winreg() -> MagicMock:
     fake_key.__enter__ = lambda self: self
     fake_key.__exit__ = MagicMock(return_value=False)
     fake.CreateKey.return_value = fake_key
+    fake.OpenKey.return_value = fake_key
     fake.HKEY_CURRENT_USER = 0x80000001
     fake.REG_DWORD = 4
+
+    values: dict[str, tuple[int, int]] = {}
+
+    def set_value(_key: MagicMock, name: str, _reserved: int, value_type: int, value: int) -> None:
+        values[name] = (value, value_type)
+
+    def query_value(_key: MagicMock, name: str) -> tuple[int, int]:
+        if name not in values:
+            raise FileNotFoundError(name)
+        return values[name]
+
+    fake.SetValueEx.side_effect = set_value
+    fake.QueryValueEx.side_effect = query_value
+    fake._values = values
     return fake
 
 
@@ -947,6 +993,27 @@ def test_install_vulkan_layer_substitutes_template_vars(tmp_path: Path) -> None:
     assert layer["disable_environment"] == {"DISABLE_VULKAN_RENDERDOC_CAPTURE_1_41": "1"}
 
 
+def test_install_vulkan_layer_reports_existing_registration_without_reregistering(
+    tmp_path: Path,
+) -> None:
+    """A cached setup records the actual enabled registry entry, not the latest CLI flag."""
+    install_dir = tmp_path / "install"
+    build_dir = tmp_path / "build"
+    layer_path = install_dir / "renderdoc.json"
+    fake_winreg = _fake_winreg()
+    fake_winreg._values[str(layer_path)] = (0, fake_winreg.REG_DWORD)
+
+    with patch.dict("sys.modules", {"winreg": fake_winreg}):
+        registered = br._install_vulkan_layer(
+            install_dir,
+            build_dir,
+            register=False,
+        )
+
+    assert registered is True
+    fake_winreg.SetValueEx.assert_not_called()
+
+
 def test_install_vulkan_layer_guards_unsubstituted_placeholder(tmp_path: Path) -> None:
     """A stray placeholder field not handled by the substitution raises loudly."""
     import json
@@ -966,15 +1033,23 @@ def test_install_vulkan_layer_guards_unsubstituted_placeholder(tmp_path: Path) -
         br._install_vulkan_layer(install_dir, build_dir, "v1.41")
 
 
-def test_install_vulkan_layer_skips_when_no_json(tmp_path: Path) -> None:
-    """No crash when layer JSON is missing from build tree."""
+def test_install_vulkan_layer_uses_pinned_fallback_when_no_source_json(
+    tmp_path: Path,
+) -> None:
+    """Cached runtimes get a process-local manifest without the source tree."""
     install_dir = tmp_path / "install"
     install_dir.mkdir()
     build_dir = tmp_path / "build"
     (build_dir / "renderdoc").mkdir(parents=True)
 
-    # Should not raise
-    br._install_vulkan_layer(install_dir, build_dir)
+    br._install_vulkan_layer(install_dir, build_dir, register=False)
+
+    layer = json.loads((install_dir / "renderdoc.json").read_text(encoding="utf-8"))[
+        "layer"
+    ]
+    assert layer["name"] == "VK_LAYER_RENDERDOC_Capture"
+    assert layer["library_path"] == ".\\renderdoc.dll"
+    assert layer["implementation_version"] == "45"
 
 
 # ---------------------------------------------------------------------------

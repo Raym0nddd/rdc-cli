@@ -47,6 +47,11 @@ def _find_renderdoccmd() -> str | None:
 @click.option("--list-apis", is_flag=True, help="List capture APIs and exit.")
 @click.option("--frame", type=int, default=None, help="Queue capture at frame N.")
 @click.option("--trigger", is_flag=True, help="Inject only; do not auto-capture.")
+@click.option(
+    "--workdir",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Working directory for the target process.",
+)
 @click.option("--timeout", type=float, default=60.0, help="Capture timeout in seconds.")
 @click.option("--wait-for-exit", is_flag=True, help="Wait for process to exit.")
 @click.option("--keep-alive", is_flag=True, help="Keep target process running after capture.")
@@ -58,6 +63,11 @@ def _find_renderdoccmd() -> str | None:
 @click.option("--soft-memory-limit", type=int, default=None, help="Soft memory limit (MB).")
 @click.option("--delay-for-debugger", type=int, default=None, help="Debugger attach delay (s).")
 @click.option("--json", "use_json", is_flag=True, help="Output as JSON.")
+@click.option(
+    "--result-json",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the launch/capture result JSON to a file instead of stdout.",
+)
 @click.pass_context
 def capture_cmd(
     ctx: click.Context,
@@ -66,6 +76,7 @@ def capture_cmd(
     list_apis: bool,
     frame: int | None,
     trigger: bool,
+    workdir: Path | None,
     timeout: float,
     wait_for_exit: bool,
     keep_alive: bool,
@@ -77,6 +88,7 @@ def capture_cmd(
     soft_memory_limit: int | None,
     delay_for_debugger: int | None,
     use_json: bool,
+    result_json: Path | None,
 ) -> None:
     """Execute application and capture a frame.
 
@@ -88,6 +100,8 @@ def capture_cmd(
 
     if not ctx.args:
         raise click.UsageError("EXECUTABLE is required (use -- before executable)")
+    if use_json and result_json is not None:
+        raise click.UsageError("--json and --result-json are mutually exclusive")
     executable = ctx.args[0]
     app_args = ctx.args[1:]
 
@@ -106,6 +120,7 @@ def capture_cmd(
         opts["delay_for_debugger"] = delay_for_debugger
 
     output_path = str(output) if output else ""
+    working_directory = str(workdir.resolve()) if workdir is not None else ""
 
     if split_session_active():
         if api_name:
@@ -117,11 +132,13 @@ def capture_cmd(
             opts,
             frame,
             trigger,
+            working_directory,
             timeout,
             wait_for_exit,
             keep_alive,
             use_json,
             auto_open,
+            result_json,
         )
         return
 
@@ -134,7 +151,7 @@ def capture_cmd(
             rd,
             executable,
             args=_platform.join_cmdline(app_args),
-            workdir="",
+            workdir=working_directory,
             output=output_path,
             opts=cap_opts,
             frame=frame,
@@ -144,13 +161,21 @@ def capture_cmd(
         )
         if not trigger and not keep_alive and result.pid:
             terminate_process(result.pid)
-        _emit_result(result, use_json, auto_open)
+        _emit_result(result, use_json, auto_open, result_json)
         return
 
+    if result_json is not None:
+        raise click.UsageError("--result-json requires the RenderDoc Python API path")
     click.echo("warning: renderdoc module unavailable, falling back to renderdoccmd", err=True)
     if opts:
         click.echo("warning: CaptureOptions flags ignored in fallback mode", err=True)
-    _fallback_renderdoccmd(executable, app_args, output_path, api_name)
+    _fallback_renderdoccmd(
+        executable,
+        app_args,
+        output_path,
+        api_name,
+        working_directory,
+    )
 
 
 def _run_split_capture(
@@ -160,11 +185,13 @@ def _run_split_capture(
     opts: dict[str, Any],
     frame: int | None,
     trigger: bool,
+    workdir: str,
     timeout: float,
     wait_for_exit: bool,
     keep_alive: bool,
     use_json: bool,
     auto_open: bool,
+    result_json: Path | None,
 ) -> None:
     payload = {
         "app": executable,
@@ -173,6 +200,7 @@ def _run_split_capture(
         "opts": opts,
         "frame": frame,
         "trigger": trigger,
+        "workdir": workdir,
         "timeout": timeout,
         "wait_for_exit": wait_for_exit,
         "keep_alive": keep_alive,
@@ -180,7 +208,7 @@ def _run_split_capture(
     result_dict = call("capture_run", payload)
     result = capture_result_from_dict(result_dict)
     result = _download_remote_capture(result, output_path)
-    _emit_result(result, use_json, auto_open)
+    _emit_result(result, use_json, auto_open, result_json)
 
 
 def _download_remote_capture(result: CaptureResult, output_path: str) -> CaptureResult:
@@ -192,12 +220,22 @@ def _download_remote_capture(result: CaptureResult, output_path: str) -> Capture
     return write_capture_to_path(result, dest)
 
 
-def _emit_result(result: Any, use_json: bool, auto_open: bool) -> None:
+def _emit_result(
+    result: Any,
+    use_json: bool,
+    auto_open: bool,
+    result_json: Path | None = None,
+) -> None:
     """Print capture result."""
-    if use_json:
+    if use_json or result_json is not None:
         import dataclasses
 
-        click.echo(json.dumps(dataclasses.asdict(result)))
+        encoded = json.dumps(dataclasses.asdict(result))
+        if result_json is not None:
+            result_json.parent.mkdir(parents=True, exist_ok=True)
+            result_json.write_text(encoded + "\n", encoding="utf-8")
+        else:
+            click.echo(encoded)
         if not result.success:
             raise SystemExit(1)
         return
@@ -266,7 +304,11 @@ def _supports_list_apis(bin_path: str) -> bool:
 
 
 def _fallback_renderdoccmd(
-    app: str, extra_args: list[str], output: str, api_name: str | None
+    app: str,
+    extra_args: list[str],
+    output: str,
+    api_name: str | None,
+    workdir: str,
 ) -> None:
     """Fall back to renderdoccmd subprocess for capture."""
     bin_path = _find_renderdoccmd()
@@ -282,7 +324,10 @@ def _fallback_renderdoccmd(
     argv.append(app)
     argv.extend(extra_args)
 
-    result = subprocess.run(argv, check=False)
+    if workdir:
+        result = subprocess.run(argv, check=False, cwd=workdir)
+    else:
+        result = subprocess.run(argv, check=False)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
     if output:

@@ -30,18 +30,48 @@ def join_cmdline(args: list[str]) -> str:
 
 
 def data_dir() -> Path:
-    """Return the per-user data directory for rdc.
+    """Return the data directory for rdc.
 
     Honours the ``RDC_DATA_DIR`` environment override (mirrors ``RDC_SESSION``);
-    when unset, falls back to the per-user home-based default.
+    an rmRenderer checkout defaults to its project-local ``renderdoc/rdc-data``
+    workspace. Standalone installations retain the per-user fallback.
     """
     override = os.environ.get("RDC_DATA_DIR")
     if override:
         return Path(override)
+    workspace = _rmrenderer_workspace()
+    if workspace is not None:
+        return workspace / "rdc-data"
     if _WIN:
         base = os.environ.get("LOCALAPPDATA", str(Path.home()))
         return Path(base) / "rdc"
     return Path.home() / ".rdc"
+
+
+def _rmrenderer_workspace() -> Path | None:
+    """Find the owning rmRenderer ``renderdoc`` workspace, if installed there."""
+    source = Path(__file__).resolve()
+    for parent in source.parents:
+        if parent.name == "rdc-cli":
+            workspace = parent.parent
+            if (workspace / "tools" / "rdc_cli_backend.py").is_file():
+                return workspace
+
+    environment = Path(sys.prefix).resolve()
+    if environment.name == ".venv":
+        workspace = environment.parent
+        if (workspace / "rdc-cli").is_dir() and (
+            workspace / "tools" / "rdc_cli_backend.py"
+        ).is_file():
+            return workspace
+    return None
+
+
+def replay_temp_dir() -> Path:
+    """Return the project-scoped directory for replay daemon temporary files."""
+    path = data_dir() / "tmp"
+    secure_dir_permissions(path)
+    return path
 
 
 def terminate_process(pid: int) -> bool:

@@ -20,10 +20,14 @@ repository and is referenced by the parent rmRenderer repository as a submodule.
   are solution-order metadata rather than `ProjectReference` entries.
 - Python headers and import libraries are copied into a build-local SDK prefix;
   the base Python installation is not modified.
-- Vulkan implicit-layer registration is opt-in through
-  `--register-vulkan-layer`. rmRenderer's normal replay build must not pass it.
+- Every Windows runtime contains a process-local `renderdoc.json` next to its DLL. Capture launch
+  selects it with `VK_IMPLICIT_LAYER_PATH`, so ExecuteAndInject, the App API, and the Vulkan frame
+  capturer use one runtime. Global implicit-layer registration remains opt-in through
+  `--register-vulkan-layer`; rmRenderer's normal setup must not pass it.
 - Installed artifacts include `renderdoc-runtime.json`; cache reuse requires an
-  exact RenderDoc commit, Python ABI, architecture, and platform match.
+  exact RenderDoc commit, Python ABI, architecture, and platform match. Its
+  `vulkanLayerRegistered` field reflects the enabled HKCU registry entry after
+  optional registration, rather than merely echoing the latest CLI flag.
 - `rdc doctor --profile replay` validates the offline replay environment without
   requiring capture tooling or a second Vulkan layer.
 - RenderDoc discovery rejects namespace packages and other false-positive
@@ -37,6 +41,17 @@ repository and is referenced by the parent rmRenderer repository as a submodule.
   `ResourceDescription.byteSize`.
 - Resource diff records accept the dimensional metadata returned by the richer
   resource query while retaining name/type comparison semantics.
+- `rdc pixel` and `rdc pick-pixel` can select either a color-target index or an
+  explicit texture resource id, and forward mip, array/depth slice, MSAA sample,
+  and component type-cast to the RenderDoc replay API. The default remains color
+  target 0 for command compatibility.
+- `rdc capture --workdir` forwards an explicit target working directory through
+  both direct and split-session capture paths to RenderDoc `ExecuteAndInject`.
+  rmRenderer requires this because runtime assets are repository-relative.
+- In an rmRenderer checkout, direct `rdc` invocations default session, remote,
+  target-control, daemon stderr, VFS export, and remote replay temporary state to
+  `renderdoc/rdc-data`; an explicit `RDC_DATA_DIR` still takes precedence, while
+  standalone rdc-cli installations retain their upstream per-user fallback.
 
 ## Upstream update procedure
 

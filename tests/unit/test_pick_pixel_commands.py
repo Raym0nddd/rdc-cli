@@ -72,6 +72,47 @@ def test_pick_pixel_default_target(monkeypatch):
     assert cap["params"]["target"] == 0
 
 
+def test_pick_pixel_resource_subresource_options(monkeypatch):
+    cap = _patch(monkeypatch)
+    r = CliRunner().invoke(
+        pick_pixel_cmd,
+        [
+            "10",
+            "20",
+            "--resource-id",
+            "43",
+            "--mip",
+            "2",
+            "--slice",
+            "3",
+            "--sample",
+            "1",
+            "--type-cast",
+            "uint",
+        ],
+    )
+    assert r.exit_code == 0
+    assert cap["params"] == {
+        "x": 10,
+        "y": 20,
+        "resource_id": 43,
+        "mip": 2,
+        "slice": 3,
+        "sample": 1,
+        "type_cast": "UInt",
+    }
+
+
+def test_pick_pixel_target_and_resource_are_mutually_exclusive(monkeypatch):
+    _patch(monkeypatch)
+    r = CliRunner().invoke(
+        pick_pixel_cmd,
+        ["10", "20", "--target", "0", "--resource-id", "43"],
+    )
+    assert r.exit_code == 2
+    assert "mutually exclusive" in r.output
+
+
 def test_pick_pixel_method_name(monkeypatch):
     cap = _patch(monkeypatch)
     CliRunner().invoke(pick_pixel_cmd, ["512", "384"])
