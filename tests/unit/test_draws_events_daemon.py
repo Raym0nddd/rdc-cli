@@ -580,6 +580,8 @@ class TestEventMultiChunk:
             flags=ActionFlags.Drawcall | ActionFlags.Indexed,
             numIndices=3600,
             numInstances=1,
+            indexOffset=65631,
+            baseVertex=22564,
             _name="vkCmdDrawIndexed",
             events=[
                 APIEvent(eventId=42, chunkIndex=0),
@@ -612,6 +614,15 @@ class TestEventMultiChunk:
     def test_last_chunk_wins_api_call(self):
         resp, _ = _handle_request(rpc_request("event", {"eid": 42}), self._make_multi_chunk_state())
         assert resp["result"]["API Call"] == "vkCmdDrawIndexed"
+
+    def test_structured_draw_parameters(self):
+        resp, _ = _handle_request(rpc_request("event", {"eid": 42}), self._make_multi_chunk_state())
+        draw = resp["result"]["Draw"]
+        assert draw["indexed"] is True
+        assert draw["numIndices"] == 3600
+        assert draw["numInstances"] == 1
+        assert draw["indexOffset"] == 65631
+        assert draw["baseVertex"] == 22564
 
 
 # ---------------------------------------------------------------------------

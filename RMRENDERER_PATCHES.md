@@ -45,6 +45,12 @@ repository and is referenced by the parent rmRenderer repository as a submodule.
   explicit texture resource id, and forward mip, array/depth slice, MSAA sample,
   and component type-cast to the RenderDoc replay API. The default remains color
   target 0 for command compatibility.
+- Pixel history reports the pre-modification, shader-output, and post-modification
+  depth values while retaining `depth` as a compatibility alias for the final value.
+- Full pipeline and depth-stencil queries fall back to Vulkan's API-specific pipeline
+  state when the generic state omits depth/stencil configuration.
+- Event and action records expose index, vertex, base-vertex, and instance offsets so
+  downstream capture comparison can distinguish draws with otherwise identical shapes.
 - `rdc capture --workdir` forwards an explicit target working directory through
   both direct and split-session capture paths to RenderDoc `ExecuteAndInject`.
   rmRenderer requires this because runtime assets are repository-relative.

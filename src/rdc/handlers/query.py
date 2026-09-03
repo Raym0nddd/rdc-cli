@@ -72,6 +72,17 @@ def _handle_pipeline(
             return pipe_result
         return _error_response(request_id, -32602, "invalid section"), True
     row = pipeline_row(state.current_eid, state.api_name, pipe_state, section=section)
+    if section is None:
+        from rdc.handlers.pipe_state import _handle_pipe_depth_stencil
+
+        depth_response, _ = _handle_pipe_depth_stencil(
+            request_id, {"_token": params.get("_token", ""), "eid": eid}, state
+        )
+        depth_state = depth_response.get("result")
+        if isinstance(depth_state, dict) and len(depth_state) > 1:
+            row["depth_stencil"] = {
+                key: value for key, value in depth_state.items() if key != "eid"
+            }
     return _result_response(request_id, {"row": row}), True
 
 
@@ -480,6 +491,10 @@ def _handle_events(
             "pass": a.pass_name,
             "num_indices": a.num_indices,
             "num_instances": a.num_instances,
+            "index_offset": a.index_offset,
+            "vertex_offset": a.vertex_offset,
+            "base_vertex": a.base_vertex,
+            "instance_offset": a.instance_offset,
         }
         for a in flat
     ]
@@ -593,6 +608,17 @@ def _handle_event(
                         val = child.data.basic.value if child.data and child.data.basic else "-"
                         params_dict[child.name] = val
     result: dict[str, Any] = {"EID": eid, "API Call": api_call}
+    action_flags = int(action.flags)
+    if action_flags & 0x000A:  # Drawcall | MeshDispatch
+        result["Draw"] = {
+            "indexed": bool(action_flags & 0x10000),
+            "numIndices": int(getattr(action, "numIndices", 0)),
+            "numInstances": max(int(getattr(action, "numInstances", 0)), 1),
+            "indexOffset": int(getattr(action, "indexOffset", 0)),
+            "vertexOffset": int(getattr(action, "vertexOffset", 0)),
+            "baseVertex": int(getattr(action, "baseVertex", 0)),
+            "instanceOffset": int(getattr(action, "instanceOffset", 0)),
+        }
     if params_dict:
         param_str = chr(10).join(f"  {k:<20}{v}" for k, v in params_dict.items())
         result["Parameters"] = chr(10) + param_str

@@ -310,6 +310,12 @@ def _handle_pipe_depth_stencil(
     except PipeError as exc:
         return exc.response, True
     ds = getattr(pipe_state, "depthStencil", None)
+    if ds is None and state.api_name.casefold() == "vulkan":
+        controller = state.adapter.controller  # type: ignore[union-attr]
+        get_vk_state = getattr(controller, "GetVulkanPipelineState", None)
+        if callable(get_vk_state):
+            vk_state = get_vk_state()
+            ds = getattr(vk_state, "depthStencil", None)
     ds_data: dict[str, Any] = {"eid": eid}
     if ds is not None:
         for f in (

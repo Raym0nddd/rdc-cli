@@ -54,6 +54,10 @@ class FlatAction:
     flags: int
     num_indices: int = 0
     num_instances: int = 1
+    index_offset: int = 0
+    vertex_offset: int = 0
+    base_vertex: int = 0
+    instance_offset: int = 0
     depth: int = 0
     parent_marker: str = "-"
     pass_name: str = "-"
@@ -111,6 +115,10 @@ def walk_actions(
             flags=flags,
             num_indices=a.numIndices,
             num_instances=max(a.numInstances, 1),
+            index_offset=int(getattr(a, "indexOffset", 0)),
+            vertex_offset=int(getattr(a, "vertexOffset", 0)),
+            base_vertex=int(getattr(a, "baseVertex", 0)),
+            instance_offset=int(getattr(a, "instanceOffset", 0)),
             depth=depth,
             parent_marker=parent_marker,
             pass_name=current_pass,

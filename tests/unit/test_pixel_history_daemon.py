@@ -59,6 +59,7 @@ def test_happy_path_mixed_pass_fail() -> None:
             eventId=88,
             fragIndex=0,
             primitiveID=0,
+            preMod=_make_mod_val(depth=1.0),
             shaderOut=_make_mod_val(0.5, 0.3, 0.1, 1.0, depth=0.95),
             postMod=_make_mod_val(0.5, 0.3, 0.1, 1.0, depth=0.95),
         ),
@@ -86,6 +87,9 @@ def test_happy_path_mixed_pass_fail() -> None:
     assert modifications[0]["flags"] == []
     assert modifications[0]["shader_out"] == {"r": 0.5, "g": 0.3, "b": 0.1, "a": 1.0}
     assert modifications[0]["post_mod"] == {"r": 0.5, "g": 0.3, "b": 0.1, "a": 1.0}
+    assert modifications[0]["pre_depth"] == 1.0
+    assert modifications[0]["shader_depth"] == 0.95
+    assert modifications[0]["post_depth"] == 0.95
     assert modifications[0]["depth"] == 0.95
     assert modifications[1]["eid"] == 102
     assert modifications[1]["passed"] is False

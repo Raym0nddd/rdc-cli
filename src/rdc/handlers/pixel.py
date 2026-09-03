@@ -68,13 +68,20 @@ def _collect_flags(mod: Any) -> list[str]:
 
 
 def _mod_to_dict(mod: Any) -> dict[str, Any]:
+    pre_depth = _safe_depth(mod.preMod.depth)
+    shader_depth = _safe_depth(mod.shaderOut.depth)
+    post_depth = _safe_depth(mod.postMod.depth)
     return {
         "eid": mod.eventId,
         "fragment": mod.fragIndex,
         "primitive": mod.primitiveID,
         "shader_out": _rgba(mod.shaderOut.col),
         "post_mod": _rgba(mod.postMod.col),
-        "depth": _safe_depth(mod.postMod.depth),
+        "pre_depth": pre_depth,
+        "shader_depth": shader_depth,
+        "post_depth": post_depth,
+        # Backward-compatible alias retained for existing consumers.
+        "depth": post_depth,
         "passed": mod.Passed(),
         "flags": _collect_flags(mod),
     }

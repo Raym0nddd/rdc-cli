@@ -11,6 +11,7 @@ from conftest import make_daemon_state, rpc_request
 from mock_renderdoc import (
     ActionDescription,
     ActionFlags,
+    CompFunc,
     ConstantBlock,
     DepthStencilState,
     Descriptor,
@@ -379,6 +380,50 @@ class TestPipeDepthStencil:
             rpc_request("pipe_depth_stencil", {"eid": 10}, token="abcdef1234567890"), s
         )
         assert resp["result"] == {"eid": 10}
+
+    def test_vulkan_state_fallback(self, tmp_path: Path) -> None:
+        pipe = MockPipeState()
+        pipe.depthStencil = None
+        s = _make_state(tmp_path, pipe)
+        vk_depth = DepthStencilState(
+            depthTestEnable=True,
+            depthWriteEnable=False,
+            depthFunction=CompFunc("Equal"),
+        )
+        s.adapter.controller.GetVulkanPipelineState = lambda: SimpleNamespace(
+            depthStencil=vk_depth
+        )
+
+        resp, _ = _handle_request(
+            rpc_request("pipe_depth_stencil", {"eid": 10}, token="abcdef1234567890"), s
+        )
+
+        assert resp["result"]["depthTestEnable"] is True
+        assert resp["result"]["depthWriteEnable"] is False
+        assert resp["result"]["depthFunction"] == "Equal"
+
+    def test_full_pipeline_includes_vulkan_depth_stencil(self, tmp_path: Path) -> None:
+        pipe = MockPipeState()
+        pipe.depthStencil = None
+        s = _make_state(tmp_path, pipe)
+        vk_depth = DepthStencilState(
+            depthTestEnable=True,
+            depthWriteEnable=False,
+            depthFunction=CompFunc("Equal"),
+        )
+        s.adapter.controller.GetVulkanPipelineState = lambda: SimpleNamespace(
+            depthStencil=vk_depth
+        )
+
+        resp, _ = _handle_request(
+            rpc_request("pipeline", {"eid": 10}, token="abcdef1234567890"), s
+        )
+
+        depth_stencil = resp["result"]["row"]["depth_stencil"]
+        assert depth_stencil["depthTestEnable"] is True
+        assert depth_stencil["depthWriteEnable"] is False
+        assert depth_stencil["depthFunction"] == "Equal"
+        assert "eid" not in depth_stencil
 
 
 # ── pipe_msaa ─────────────────────────────────────────────────────────────────
